@@ -1,6 +1,9 @@
-package it.g03.catalog
+package it.g03.catalog.Entities
 
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 
 /**
  * A sellable offer (e.g. a train departure)

@@ -2,27 +2,36 @@ spring:
   application:
     # logical service name used in logs, metrics and discovery-related metadata
     name: catalog
+  data:
+    web:
+      pageable:
+        # sane default + hard cap on page size for every paginated list endpoint
+        default-page-size: 20
+        max-page-size: 100
   datasource:
-    # local dev database: in-memory H2 so the service starts without external dependencies
-    url: jdbc:h2:mem:catalogdb
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
+    # PostgreSQL everywhere (no H2). Values are env-driven with local-dev defaults; the cluster
+    # supplies them via the config repo (ConfigMap/SealedSecret). Dev uses one shared `eurotransit`
+    # database with a schema per service — this service owns the `catalog` schema.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:eurotransit}
+    username: ${DB_USER:catalog}
+    password: ${DB_PASS:catalog}
+    driver-class-name: org.postgresql.Driver
   flyway:
-    # Local H2 development uses Hibernate ddl-auto; Flyway is reserved for the postgres profile
-    enabled: false
-  h2:
-    console:
-      # useful for debugging local state
-      enabled: true
+    # Flyway owns the schema; it creates and migrates into the per-service `catalog` schema
+    enabled: true
+    schemas: catalog
+    default-schema: catalog
   jpa:
     hibernate:
-      # let Hibernate create/update schema in local dev
-      ddl-auto: update
-    # print SQL to make persistence behavior easier to inspect locally
+      # Hibernate only validates the Flyway-owned schema; it never mutates it
+      ddl-auto: validate
+    # print SQL to make persistence behavior easier to inspect locally (off in the cluster overlay)
     show-sql: true
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        # this service's tables live in the `catalog` schema
+        default_schema: catalog
         # format SQL so the output is easier to read in logs
         format_sql: true
 

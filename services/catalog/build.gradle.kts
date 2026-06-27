@@ -33,17 +33,24 @@ dependencies {
 	implementation("io.micrometer:micrometer-tracing-bridge-otel")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 
-	// Schema migrations (postgres profile only): Flyway owns the schema, Hibernate validates
-	implementation("org.flywaydb:flyway-core")
+	// Schema migrations: Flyway owns the schema, Hibernate validates. The starter pulls in Flyway core
+	// AND Spring Boot 4's Flyway auto-configuration (in module spring-boot-flyway) that actually runs
+	// the migrations on startup — bare flyway-core does not auto-migrate under Boot 4's modularized config.
+	implementation("org.springframework.boot:spring-boot-starter-flyway")
 	runtimeOnly("org.flywaydb:flyway-database-postgresql")
 
 	runtimeOnly("org.postgresql:postgresql")
-	runtimeOnly("com.h2database:h2")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// Tests run against a real PostgreSQL via Testcontainers (no H2) — versions from the Spring Boot BOM.
+	// Testcontainers 2.x renamed the module artifacts (testcontainers-postgresql, not postgresql).
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:testcontainers-postgresql")
+	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
 }
 
 kotlin {
