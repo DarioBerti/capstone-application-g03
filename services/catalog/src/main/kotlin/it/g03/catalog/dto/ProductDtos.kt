@@ -1,4 +1,4 @@
-package it.g03.catalog.controller
+package it.g03.catalog.dto
 
 import it.g03.catalog.entities.Product
 

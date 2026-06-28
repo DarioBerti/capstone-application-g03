@@ -1,32 +1,12 @@
 package it.g03.inventory.controller
 
+import it.g03.inventory.dto.ReservationResponse
+import it.g03.inventory.dto.ReserveRequest
+import it.g03.inventory.dto.toResponse
 import it.g03.inventory.entities.InventoryItem
-import it.g03.inventory.entities.Reservation
-import it.g03.inventory.entities.ReservationStatus
 import it.g03.inventory.repository.InventoryItemRepository
 import it.g03.inventory.service.InventoryService
-import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import java.time.Instant
-
-// request body for a reserve call ("hold these seats now")
-data class ReserveRequest(val orderId: String, val productId: String, val qty: Int = 1)
-
-// response body carrying the reservation outcome back to the caller (Orders)
-data class ReservationResponse(
-    val orderId: String,
-    val productId: String,
-    val qty: Int,
-    val status: ReservationStatus,
-    val expiresAt: Instant,
-    /** true when this call hit the idempotent replay path (duplicate delivery/retry) */
-    val replayed: Boolean,
-)
-
-// maps a persisted Reservation entity to the API response DTO
-private fun Reservation.toResponse(replayed: Boolean = false) =
-    ReservationResponse(orderId, productId, qty, status, expiresAt, replayed)
 
 /**
  * Internal synchronous API, called by Orders inside its async pipeline ("a reservation decision must be made now"). Not exposed through the public ingress
@@ -68,14 +48,4 @@ class InventoryController(
     // GET /api/inventory/items -> returns the full list of inventory items
     @GetMapping("/items")
     fun items(): List<InventoryItem> = items.findAll()
-
-    // converts a missing product/reservation into a 404 response with a small JSON error body
-    @ExceptionHandler(NoSuchElementException::class)
-    fun notFound(e: NoSuchElementException): ResponseEntity<Map<String, String?>> =
-        ResponseEntity.status(HttpStatus.NOT_FOUND).body(mapOf("error" to e.message))
-
-    // converts an invalid request (e.g. non-positive qty) into a 400 response with a small JSON error body
-    @ExceptionHandler(IllegalArgumentException::class)
-    fun badRequest(e: IllegalArgumentException): ResponseEntity<Map<String, String?>> =
-        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(mapOf("error" to e.message))
 }

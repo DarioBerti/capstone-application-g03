@@ -50,7 +50,8 @@ one last seat — can both buy it?* The answer must always be no.
 
 Organize by layer, **one repository per file**, keeping small cohesive types grouped (mirrors the Catalog reference layout):
 
-- `controller/` — REST controllers + their request/response DTOs
+- `controller/` — REST controllers + the `GlobalExceptionHandler` (`@RestControllerAdvice`)
+- `dto/` — request/response DTOs, `ErrorResponse`, and the `Reservation.toResponse()` mapper
 - `service/` — business logic (reservation logic, the overdue-hold reconciler)
 - `repository/` — Spring Data repositories, **one repository per file**
 - `entities/` — JPA entities (`InventoryItem`, `Reservation`), one per file

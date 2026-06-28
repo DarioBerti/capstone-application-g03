@@ -51,7 +51,8 @@ a reason). Package `it.g03.orders`. This is the critical path — SLOs, tracing,
 
 Organize by layer, **one repository per file**, keeping small cohesive types grouped (mirrors the Catalog reference layout):
 
-- `controller/` — REST controllers + their request/response DTOs
+- `controller/` — REST controllers + the `GlobalExceptionHandler` (`@RestControllerAdvice`)
+- `dto/` — request/response DTOs, `ErrorResponse`, and the `Order.toResponse()` mapper
 - `service/` — business logic (the saga, state machine, outbox relay)
 - `repository/` — Spring Data repositories, **one repository per file** (split today's `Repositories.kt`)
 - `entities/` — JPA entities (`Order`, `OutboxEvent`, …), one per file

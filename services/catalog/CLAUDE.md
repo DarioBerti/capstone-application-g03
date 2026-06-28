@@ -49,7 +49,8 @@ share only the `productId` vocabulary (database-per-service), never each other's
 
 Organize by layer, **one repository per file**, keeping small cohesive types grouped:
 
-- `controller/` — REST controllers + their request/response DTOs
+- `controller/` — REST controllers + the `GlobalExceptionHandler` (`@RestControllerAdvice`)
+- `dto/` — request/response DTOs, `ErrorResponse`, and the `Product.toResponse()` mapper
 - `service/` — business/query logic
 - `repository/` — Spring Data repositories, **one repository per file** (never bundle several into a `Repositories.kt`)
 - `entities/` — JPA entities, one entity per file

@@ -1,6 +1,6 @@
 package it.g03.catalog
 
-import it.g03.catalog.controller.ProductFilter
+import it.g03.catalog.dto.ProductFilter
 import it.g03.catalog.entities.Product
 import it.g03.catalog.repository.ProductRepository
 import it.g03.catalog.service.CatalogService

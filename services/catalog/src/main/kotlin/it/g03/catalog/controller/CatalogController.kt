@@ -1,12 +1,12 @@
 package it.g03.catalog.controller
 
+import it.g03.catalog.dto.ProductFilter
+import it.g03.catalog.dto.ProductResponse
+import it.g03.catalog.dto.toResponse
 import it.g03.catalog.service.CatalogService
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.web.PageableDefault
-import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
@@ -35,14 +35,4 @@ class CatalogController(private val service: CatalogService) {
     @GetMapping("/products/{productId}")
     fun byId(@PathVariable productId: String): ProductResponse =
         service.byId(productId).toResponse()
-
-    // Converts a missing product into a 404 response with a small JSON error body.
-    @ExceptionHandler(NoSuchElementException::class)
-    fun notFound(e: NoSuchElementException): ResponseEntity<Map<String, String?>> =
-        ResponseEntity.status(HttpStatus.NOT_FOUND).body(mapOf("error" to e.message))
-
-    // Converts an invalid request into a 400 response with a small JSON error body.
-    @ExceptionHandler(IllegalArgumentException::class)
-    fun badRequest(e: IllegalArgumentException): ResponseEntity<Map<String, String?>> =
-        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(mapOf("error" to e.message))
 }

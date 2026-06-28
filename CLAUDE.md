@@ -155,7 +155,8 @@ Organize each service's source **by layer into folders whose names are the packa
 
 | Folder | Package | Holds |
 |---|---|---|
-| `controller/` | `it.g03.<svc>.controller` | REST controllers + their request/response DTOs |
+| `controller/` | `it.g03.<svc>.controller` | REST controllers + the service's `GlobalExceptionHandler` (`@RestControllerAdvice`) |
+| `dto/` | `it.g03.<svc>.dto` | request/response DTOs, the `ErrorResponse` DTO, and entity↔DTO mappers (`toResponse()`) |
 | `service/` | `it.g03.<svc>.service` | business logic (services, saga, state machine, outbox relay, reconciler) |
 | `repository/` | `it.g03.<svc>.repository` | Spring Data repositories — **one repository per file** |
 | `entities/` | `it.g03.<svc>.entities` | JPA entities (+ their tightly-bound enums) |
@@ -163,13 +164,14 @@ Organize each service's source **by layer into folders whose names are the packa
 | `gateway/` | `it.g03.<svc>.gateway` | outbound sync HTTP clients to other services (where present, e.g. `orders`) |
 
 **One repository per file** (never bundle several into a `Repositories.kt`); otherwise keep small
-cohesive types grouped (request/response DTOs with their controller, event payloads together). Spring
+cohesive types grouped (a service's request/response DTOs together in `dto/`, event payloads together). Spring
 component/entity/repository scanning is unaffected — `@SpringBootApplication` scans `it.g03.<svc>` and
 all subpackages.
 
 ### DTOs at the boundary
-Never expose JPA entities directly. Define request/response `data class` DTOs in the controller layer
-and map entity ↔ DTO explicitly (see `orders` `Order.toResponse()` for the pattern).
+Never expose JPA entities directly. Define request/response `data class` DTOs in the **`dto/` package**
+(`it.g03.<svc>.dto`) and map entity ↔ DTO explicitly with a top-level `toResponse()` mapper kept
+beside them (see `it.g03.catalog.dto` `Product.toResponse()` for the reference pattern).
 
 ### Paginated reads (standard for any endpoint returning table rows)
 Endpoints returning rows from a table **must be paginated and use Specifications** for filtering —
@@ -323,8 +325,9 @@ Project-specific notes:
   Keep DTOs and domain values as immutable `data class`es with `val`.
 - Package every service under `it.g03.<service>`. `group = "it.g03"`.
 - Keep files small and cohesive (target 200–400 lines). Many small files over few large ones.
-- Handle errors explicitly at the boundary; map domain exceptions to HTTP status in controller
-  `@ExceptionHandler`s (404 for `NoSuchElementException`, 400 for `IllegalArgumentException`).
+- Handle errors explicitly at the boundary; map domain exceptions to HTTP status in a per-service
+  `@RestControllerAdvice` (`GlobalExceptionHandler`) returning a typed `ErrorResponse` (404 for
+  `NoSuchElementException`, 400 for `IllegalArgumentException`) — not per-controller `@ExceptionHandler`s.
 
 ## Agentic coding policy (graded)
 
