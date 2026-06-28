@@ -38,10 +38,24 @@ spring:
       auto-offset-reset: earliest
       # Manual ack -> at-least-once delivery -> handlers must be idempotent (idempotency table is this service's core design constraint)
       enable-auto-commit: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Validate Keycloak JWTs. jwk-set-uri (NOT issuer-uri) builds the decoder lazily — JWKS is
+          # fetched + cached on the first token — so startup is not coupled to Keycloak (Pillar C).
+          # The `iss` claim is checked separately against app.oidc.issuer by SecurityConfig.
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/certs}
 
 server:
   # Default local HTTP port
   port: 8080
+
+# App-level tunables (overridable by env), see root CLAUDE.md "Configuration & variable injection".
+app:
+  oidc:
+    # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
 
 # Observability (Pillar D): K8s probes, Prometheus scrape endpoint, OTel tracing
 # OTLP endpoint is a local default; in-cluster it is overridden via env (MANAGEMENT_OTLP_TRACING_ENDPOINT) to point at the collector / Tempo

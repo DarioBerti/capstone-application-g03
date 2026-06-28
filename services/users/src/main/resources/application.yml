@@ -1,0 +1,90 @@
+spring:
+  application:
+    # logical service name used in logs, metrics and discovery-related metadata
+    name: users
+  data:
+    web:
+      pageable:
+        # sane default + hard cap on page size for every paginated list endpoint
+        default-page-size: 20
+        max-page-size: 100
+  datasource:
+    # PostgreSQL everywhere (no H2). Values are env-driven with local-dev defaults; the cluster
+    # supplies them via the config repo (ConfigMap/SealedSecret). Dev uses one shared `eurotransit`
+    # database with a schema per service — this service owns the `users` schema.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:eurotransit}
+    username: ${DB_USER:users}
+    password: ${DB_PASS:users}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    # Flyway owns the schema; it creates and migrates into the per-service `users` schema
+    enabled: true
+    schemas: users
+    default-schema: users
+  jpa:
+    hibernate:
+      # Hibernate only validates the Flyway-owned schema; it never mutates it
+      ddl-auto: validate
+    # print SQL to make persistence behavior easier to inspect locally (off in the cluster overlay)
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        # this service's tables live in the `users` schema
+        default_schema: users
+        # format SQL so the output is easier to read in logs
+        format_sql: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Validate Keycloak JWTs by their signature. We use jwk-set-uri (NOT issuer-uri) on purpose:
+          # jwk-set-uri builds the decoder lazily (JWKS fetched + cached on the first token), so service
+          # startup is NOT coupled to Keycloak being up (Pillar C). The issuer claim is verified separately
+          # against `app.oidc.issuer` by SecurityConfig.
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/certs}
+
+server:
+  # Default local HTTP port
+  port: 8080
+
+# App-level tunables (overridable by env), see root CLAUDE.md "Configuration & variable injection".
+app:
+  oidc:
+    # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
+
+# Observability (Pillar D): K8s probes, Prometheus scrape endpoint, OTel tracing
+# OTLP endpoint is a local default; in-cluster it is overridden via env (MANAGEMENT_OTLP_TRACING_ENDPOINT) to point at the collector / Tempo
+management:
+  endpoints:
+    web:
+      exposure:
+        # expose only endpoints that service and platform actually need
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        # enable Kubernetes readiness/liveness style probes
+        enabled: true
+      # show details to simplify local debug; cluster policy can override this
+      show-details: always
+      group:
+        readiness:
+          # Readiness should reflect both application state and database availability
+          include: readinessState,db
+  health:
+    readinessstate:
+      # Spring Boot's readiness lifecycle state
+      enabled: true
+    livenessstate:
+      # Spring Boot's liveness lifecycle state
+      enabled: true
+  tracing:
+    sampling:
+      # sample every trace locally to inspect complete request flows
+      probability: 1.0
+  otlp:
+    tracing:
+      # local default collector endpoint; overridden in cluster deployment
+      endpoint: http://localhost:4318/v1/traces

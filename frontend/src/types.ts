@@ -40,3 +40,14 @@ export interface Authorization {
   status: AuthorizationStatus
   replayed: boolean
 }
+
+// The caller's app-side profile, owned by the users service (keyed by the Keycloak subject).
+export interface Profile {
+  keycloakSub: string
+  email: string
+  givenName: string | null
+  familyName: string | null
+  preferredUsername: string | null
+  createdAt: string
+  updatedAt: string
+}

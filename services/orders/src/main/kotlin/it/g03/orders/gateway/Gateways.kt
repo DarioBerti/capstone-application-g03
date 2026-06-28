@@ -1,6 +1,7 @@
 package it.g03.orders.gateway
 
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.client.ClientHttpRequestInterceptor
 import org.springframework.http.client.JdkClientHttpRequestFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
@@ -11,6 +12,8 @@ import java.util.UUID
 
 /*
  * Synchronous gateways to the sibling services ("a decision must be made NOW" -> these calls happen INSIDE the async pipeline, see docs/design.md). They are interfaces so the saga is testable with fakes; the HTTP implementations carry connect/read TIMEOUTS on every call (Pillar C: no unbounded waits).
+ * Inventory/Payments are OAuth2 resource servers, so every call carries a service bearer token (client
+ * credentials) attached by the interceptor below — the saga thread has no user SecurityContext to forward.
  * Phase 2 wraps these same gateways with Resilience4j (circuit breaker / retry+jitter / bulkhead)
  */
 
@@ -36,6 +39,14 @@ private fun timeoutFactory() =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
     ).apply { setReadTimeout(Duration.ofSeconds(5)) }
 
+// Attaches the service bearer token to every outbound call. If no token is available the call proceeds
+// without one (the downstream 401 then surfaces as a normal saga failure, recovered by Kafka redelivery).
+private fun bearerAuth(tokens: ServiceTokenProvider) =
+    ClientHttpRequestInterceptor { request, body, execution ->
+        tokens.token()?.let { request.headers.setBearerAuth(it) }
+        execution.execute(request, body)
+    }
+
 // Exact mirrors of the sibling services' response bodies
 private data class InventoryReservationDto(
     val orderId: String,
@@ -59,9 +70,14 @@ class HttpInventoryGateway(
     // in-cluster the env var points at the Service DNS (http://inventory:8080)
     // the localhost default is for local multi-process dev
     @Value("\${app.inventory-base-url}") baseUrl: String,
+    tokens: ServiceTokenProvider,
 ) : InventoryGateway {
 
-    private val client = RestClient.builder().baseUrl(baseUrl).requestFactory(timeoutFactory()).build()
+    private val client = RestClient.builder()
+        .baseUrl(baseUrl)
+        .requestFactory(timeoutFactory())
+        .requestInterceptor(bearerAuth(tokens))
+        .build()
 
     // POST /api/inventory/reservations -> place a hold on the seats for this order
     override fun reserve(orderId: String, productId: String, qty: Int): ReservationResult {
@@ -98,9 +114,14 @@ class HttpInventoryGateway(
 @Component // registers this HTTP gateway as the production PaymentsGateway bean
 class HttpPaymentsGateway(
     @Value("\${app.payments-base-url}") baseUrl: String,
+    tokens: ServiceTokenProvider,
 ) : PaymentsGateway {
 
-    private val client = RestClient.builder().baseUrl(baseUrl).requestFactory(timeoutFactory()).build()
+    private val client = RestClient.builder()
+        .baseUrl(baseUrl)
+        .requestFactory(timeoutFactory())
+        .requestInterceptor(bearerAuth(tokens))
+        .build()
 
     // POST /api/payments/authorizations -> authorize the charge for this order (idempotent)
     override fun authorize(orderId: String, amountCents: Long): AuthorizationResult {

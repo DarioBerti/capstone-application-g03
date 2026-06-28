@@ -38,10 +38,24 @@ spring:
       auto-offset-reset: earliest
       # Manual offset commit: we acknowledge only AFTER the handler durably processed the event, so a crash mid-processing causes a redelivery (at-least-once) instead of a silent loss, which is safe because our handlers are idempotent
       enable-auto-commit: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Validate Keycloak JWTs. jwk-set-uri (NOT issuer-uri) builds the decoder lazily — JWKS is
+          # fetched + cached on the first token — so startup is not coupled to Keycloak (Pillar C).
+          # The `iss` claim is checked separately against app.oidc.issuer by SecurityConfig.
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/certs}
 
 server:
   # Default local HTTP port
   port: 8080
+
+# App-level tunables (overridable by env), see root CLAUDE.md "Configuration & variable injection".
+app:
+  oidc:
+    # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
 
 # Reservation hold semantics: a RESERVED hold not confirmed/released within "ttl" is swept back to stock by the reconciler (every "sweep-interval"). ISO-8601 durations
 inventory:

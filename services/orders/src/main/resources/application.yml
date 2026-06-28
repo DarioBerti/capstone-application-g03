@@ -30,6 +30,26 @@ spring:
       auto-offset-reset: earliest
       # Manual ack: we commit the offset only after the handler has durably processed the event, so an at-least-once redelivery is safe (consumers are idempotent)
       enable-auto-commit: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # INBOUND: validate Keycloak user tokens on /api/orders. jwk-set-uri (NOT issuer-uri) builds the
+          # decoder lazily, so startup is not coupled to Keycloak (Pillar C); SecurityConfig checks `iss`.
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/certs}
+      client:
+        # OUTBOUND: a client-credentials registration so the saga can mint a SERVICE token for the calls to
+        # Inventory/Payments (no user SecurityContext on the Kafka listener thread). See ServiceTokenProvider.
+        registration:
+          keycloak-svc:
+            provider: keycloak
+            client-id: ${ORDERS_CLIENT_ID:orders-svc}
+            client-secret: ${ORDERS_CLIENT_SECRET:dev-orders-svc-secret}
+            authorization-grant-type: client_credentials
+        provider:
+          keycloak:
+            # Direct token endpoint (no OIDC discovery needed for client_credentials), env-overridden in-cluster.
+            token-uri: ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/token}
 
 server:
   port: 8080
@@ -40,6 +60,9 @@ app:
   # Sibling-service base URLs: env vars in-cluster (Kubernetes Service DNS, injected by the Helm chart), localhost ports for local multi-process dev
   inventory-base-url: ${INVENTORY_BASE_URL:http://localhost:8081}
   payments-base-url: ${PAYMENTS_BASE_URL:http://localhost:8082}
+  # Expected `iss` claim on inbound tokens; SecurityConfig rejects tokens from any other issuer.
+  oidc:
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
   # Transactional-outbox relay (see OutboxPublisher): tests set enabled=false
   outbox:
     enabled: true

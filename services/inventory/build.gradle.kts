@@ -27,6 +27,9 @@ dependencies {
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("tools.jackson.module:jackson-module-kotlin")
 
+	// Security: validate Keycloak-issued JWTs as an OAuth2 resource server (lazy JWKS, see application.yml)
+	implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
+
 	// Async events (inventory-reserved / inventory-released) + coroutines for the consumer. The starter
 	// pulls in spring-kafka AND Boot 4's Kafka auto-configuration (module spring-boot-kafka) that builds the
 	// KafkaTemplate bean — bare spring-kafka does not auto-configure it under Boot 4's modularized config.
@@ -52,6 +55,7 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.springframework.kafka:spring-kafka-test")
+	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
