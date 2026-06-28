@@ -11,7 +11,10 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: etg03registry.azurecr.io
+  # ACR del gruppo (sub "Azure for Students"). DEVE combaciare con global.registry del chart
+  # (deploy/charts/eurotransit/values.yaml): la CI bumpa solo image.tag, non il repository, quindi
+  # se i due registry divergono Argo pulla un'immagine inesistente -> ImagePullBackOff. Vedi agent-log #14.
+  REGISTRY: labg03clusterregistry.azurecr.io
   IMAGE_PREFIX: eurotransit
 
 permissions:
