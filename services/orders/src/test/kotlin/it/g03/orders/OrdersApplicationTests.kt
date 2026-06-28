@@ -14,6 +14,7 @@ import kotlin.test.assertTrue
 		"events.publish.enabled=false",                   // no broker in tests
 		"app.kafka-listeners-enabled=false",              // keep the listener off (no broker)
 		"app.outbox.enabled=false",                       // no background relay racing the assertions
+		"app.recovery.enabled=false",                     // no recovery sweep racing the assertions
 	],
 )
 class OrdersApplicationTests {

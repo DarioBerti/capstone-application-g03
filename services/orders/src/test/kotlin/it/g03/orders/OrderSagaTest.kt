@@ -12,6 +12,7 @@ import it.g03.orders.repository.OutboxEventRepository
 import it.g03.orders.service.OrderSaga
 import it.g03.orders.service.OrderService
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -32,6 +33,7 @@ import kotlin.test.assertTrue
         "events.publish.enabled=false",     // no broker in tests
         "app.kafka-listeners-enabled=false", // saga is driven directly, not via Kafka
         "app.outbox.enabled=false",          // no background relay racing the assertions
+        "app.recovery.enabled=false",        // no recovery sweep racing the assertions
     ],
 )
 
@@ -56,10 +58,16 @@ class OrderSagaTest {
 
     class FakePayments : PaymentsGateway {
         var status = "AUTHORIZED"
+        var voidStatus = "VOIDED"
         var authorizeCalls = 0
+        val voided = mutableListOf<String>()
         override fun authorize(orderId: String, amountCents: Long): AuthorizationResult {
             authorizeCalls++
             return AuthorizationResult(status, false)
+        }
+        override fun void(orderId: String): AuthorizationResult {
+            voided += orderId
+            return AuthorizationResult(voidStatus, false)
         }
     }
 
@@ -91,7 +99,9 @@ class OrderSagaTest {
         inventory.reserveCalls = 0
         inventory.released.clear()
         payments.status = "AUTHORIZED"
+        payments.voidStatus = "VOIDED"
         payments.authorizeCalls = 0
+        payments.voided.clear()
     }
 
     // Helper: the sorted list of topics currently sitting in the outbox (the emitted event trail)
@@ -142,6 +152,7 @@ class OrderSagaTest {
 
     // Verifies error-path: a declined payment triggers the compensation (release) and rejects with PAYMENT_DECLINED
     @Test
+    @Tag("chaos-02")
     fun `payment declined - reservation is RELEASED (compensation) and order REJECTED`() {
         payments.status = "DECLINED"
         val order = orderService.placeOrder("TRENO-TEST", 1)
@@ -154,9 +165,11 @@ class OrderSagaTest {
         assertEquals(listOf(order.id.toString()), inventory.released, "the hold must be given back")
     }
 
-    // Verifies error-path: a hold that expired before confirm rejects with RESERVATION_EXPIRED
+    // Verifies error-path + compensation (Fase 2 #4, test 5.4): a hold that expired AFTER authorize must VOID the charge
+    // BEFORE rejecting with RESERVATION_EXPIRED — closing the saga invariant "no charge without a seat"
     @Test
-    fun `hold expired before confirm (slow payment) - order REJECTED(RESERVATION_EXPIRED)`() {
+    @Tag("chaos-02")
+    fun `hold expired after authorize - charge is VOIDED (compensation) then order REJECTED(RESERVATION_EXPIRED)`() {
         inventory.confirmStatus = "EXPIRED"
         val order = orderService.placeOrder("TRENO-TEST", 1)
 
@@ -164,6 +177,48 @@ class OrderSagaTest {
 
         val saved = orders.findById(order.id).orElseThrow()
         assertEquals(OrderStatus.REJECTED, saved.status)
+        assertEquals(RejectionReason.RESERVATION_EXPIRED, saved.reason)
+        assertEquals(listOf(order.id.toString()), payments.voided, "the charge must be voided before the reject")
+    }
+
+    // Verifies resilience (Fase 2 #4, Option B): if the VOID itself fails (Payments down / breaker open) the order must NOT
+    // go terminal with a live charge — it is PARKED so the recovery sweep retries the void; once the void succeeds it REJECTS
+    @Test
+    @Tag("chaos-02")
+    fun `void fails - order is PARKED (not rejected) then REJECTED(RESERVATION_EXPIRED) once the void succeeds`() {
+        inventory.confirmStatus = "EXPIRED"
+        payments.voidStatus = "UNAVAILABLE" // the storno cannot complete now
+        val order = orderService.placeOrder("TRENO-TEST", 1)
+
+        saga.handle(order.id)
+
+        val parked = orders.findById(order.id).orElseThrow()
+        assertEquals(OrderStatus.PAYMENT_PENDING, parked.status, "a failed void must park (retry), never leak a live charge")
+        assertEquals(null, parked.reason, "parking is not a rejection")
+        assertTrue(payments.voided.isNotEmpty(), "the void was attempted")
+
+        // Payments recovers; the recovery sweep re-drives the saga -> the void now succeeds
+        payments.voidStatus = "VOIDED"
+        saga.handle(order.id)
+
+        val rejected = orders.findById(order.id).orElseThrow()
+        assertEquals(OrderStatus.REJECTED, rejected.status)
+        assertEquals(RejectionReason.RESERVATION_EXPIRED, rejected.reason)
+        assertEquals(1, inventory.reserveCalls, "reserve is not repeated across the recovery")
+    }
+
+    // Verifies the crash-window branch (Fase 2 #4): if a prior pass voided the charge but crashed before the reject, the
+    // replayed authorize returns VOIDED — the saga must finish the rejection, NOT mis-park as an "unexpected status"
+    @Test
+    @Tag("chaos-02")
+    fun `authorize replays VOIDED (crash after void) - order REJECTED(RESERVATION_EXPIRED), never PARKED`() {
+        payments.status = "VOIDED" // a replayed authorize of an already-voided charge
+        val order = orderService.placeOrder("TRENO-TEST", 1)
+
+        saga.handle(order.id)
+
+        val saved = orders.findById(order.id).orElseThrow()
+        assertEquals(OrderStatus.REJECTED, saved.status, "a VOIDED replay must finish the rejection, not park")
         assertEquals(RejectionReason.RESERVATION_EXPIRED, saved.reason)
     }
 
@@ -180,5 +235,62 @@ class OrderSagaTest {
         assertEquals(eventsAfterFirstRun, outbox.count(), "no duplicate outbox events")
         assertEquals(reserveCallsAfterFirstRun, inventory.reserveCalls, "no downstream calls on replay")
         assertEquals(OrderStatus.CONFIRMED, orders.findById(order.id).orElseThrow().status)
+    }
+
+    // Verifies resilience (Pillar C): when Payments is UNAVAILABLE (circuit breaker open) the order is PARKED in PAYMENT_PENDING — not rejected, hold NOT released — and a later retry (breaker closed) drives it to CONFIRMED without repeating the reservation
+    @Test
+    @Tag("chaos-01")
+    fun `payments unavailable - order is PARKED PAYMENT_PENDING then CONFIRMED on retry`() {
+        payments.status = "UNAVAILABLE" // simulates the gateway's circuit-breaker fallback
+        val order = orderService.placeOrder("TRENO-TEST", 1)
+
+        saga.handle(order.id)
+
+        val parked = orders.findById(order.id).orElseThrow()
+        assertEquals(OrderStatus.PAYMENT_PENDING, parked.status, "an unavailable Payments must park, not reject")
+        assertEquals(null, parked.reason, "parking is not a rejection")
+        assertTrue(inventory.released.isEmpty(), "the seats stay held while parked (no compensation)")
+
+        // Payments recovers; in production OrderRecoverySweeper re-drives the saga
+        payments.status = "AUTHORIZED"
+        saga.handle(order.id)
+
+        val confirmed = orders.findById(order.id).orElseThrow()
+        assertEquals(OrderStatus.CONFIRMED, confirmed.status)
+        assertEquals(1, inventory.reserveCalls, "reserve is not repeated on the retry (resumed from PAYMENT_PENDING)")
+    }
+
+    // Verifies the recovery-loop reality: a SECOND consecutive UNAVAILABLE keeps the order PARKED (markPaymentPending is a no-op from PAYMENT_PENDING), reserve is never repeated, and a later AUTHORIZED still confirms
+    @Test
+    @Tag("chaos-01")
+    fun `repeated UNAVAILABLE keeps the order PARKED, then CONFIRMS when payments returns`() {
+        payments.status = "UNAVAILABLE"
+        val order = orderService.placeOrder("TRENO-TEST", 1)
+
+        saga.handle(order.id) // park
+        saga.handle(order.id) // still unavailable -> stays parked (no-op re-park)
+
+        assertEquals(OrderStatus.PAYMENT_PENDING, orders.findById(order.id).orElseThrow().status)
+        assertEquals(1, inventory.reserveCalls, "reserve is not repeated while parked")
+
+        payments.status = "AUTHORIZED"
+        saga.handle(order.id)
+
+        assertEquals(OrderStatus.CONFIRMED, orders.findById(order.id).orElseThrow().status)
+        assertEquals(1, inventory.reserveCalls, "reserve still called exactly once across the whole recovery")
+    }
+
+    // Verifies the defensive branch: an UNEXPECTED authorization status must never CONFIRM — it parks (safe) rather than confirm a seat we may not have paid for
+    @Test
+    @Tag("chaos-01")
+    fun `unexpected authorization status - order is PARKED, never CONFIRMED`() {
+        payments.status = "WAT" // not AUTHORIZED / DECLINED / UNAVAILABLE
+        val order = orderService.placeOrder("TRENO-TEST", 1)
+
+        saga.handle(order.id)
+
+        val parked = orders.findById(order.id).orElseThrow()
+        assertEquals(OrderStatus.PAYMENT_PENDING, parked.status, "an unknown status must park, never confirm")
+        assertTrue(inventory.released.isEmpty(), "nothing to compensate on a parked order")
     }
 }

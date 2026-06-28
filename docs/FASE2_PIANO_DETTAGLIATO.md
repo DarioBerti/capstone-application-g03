@@ -20,7 +20,7 @@ Il prof inquadra la resilienza così — tenerlo a mente in ogni scelta:
 - **"Resilience is designed in, not bolted on"** (deck 11, slide 4). Non si aggiunge dopo: emerge da 4 proprietà che interagiscono — **Redundancy, Isolation, Recovery, Observability** (slide 4-5).
 - **"Resilience is a property you prove, not assume"** (slide 41): ogni policy va dimostrata con un test/esperimento, non dichiarata.
 - **Anatomia del cascading failure** (slide 6-7): un downstream lento → i thread del chiamante si riempiono → timeout → retry storm → amplifica il carico → si propaga. Le difese sono *strutturali*: bulkhead, circuit breaker, backpressure, timeout, load shedding.
-- **"Instrument first, chaos second"** (slide 45): senza observability i test di resilienza danno conclusioni non interpretabili. → ogni feature di Fase 2 **deve emettere una metrica** (vedi §7).
+- **"Instrument first, chaos second"** (slide 45): senza observability i test di resilienza danno conclusioni non interpretabili. → ogni feature di Fase 2 **deve emettere una metrica** (vedi #7).
 
 **Anti-pattern del prof da NON commettere** (slide 14, 45):
 - Retry senza backoff/jitter → retry storm.
@@ -29,11 +29,13 @@ Il prof inquadra la resilienza così — tenerlo a mente in ogni scelta:
 - Chaos senza observability.
 - Alert sulla CPU invece che sul sintomo visibile all'utente.
 
-**Cosa è eseguibile ORA (locale, H2, zero dipendenze):** punti 1, 2, 4, 5 e l'observability lato codice (§7). Il punto 6 (validazione live) e dashboard/alert richiedono il cluster (Fase 3/4) → marcati come dipendenza, non bloccanti.
+**Cosa è eseguibile ORA (locale, H2, zero dipendenze):** punti 1, 2, 4, 5 e l'observability lato codice (#7). Il punto 6 (validazione live) e dashboard/alert richiedono il cluster (Fase 3/4) → marcati come dipendenza, non bloccanti.
 
 ---
 
-## 1. Circuit Breaker Orders→Payments + stato `PAYMENT_PENDING`  *(KEYSTONE)*
+## 1. Circuit Breaker Orders→Payments + stato `PAYMENT_PENDING`  *(KEYSTONE)* — ✅ FATTO (2026-06-25)
+
+> **Stato: IMPLEMENTATO e testato** (20/20 test verdi nel servizio `orders`). Decorazione **programmatica** del breaker via `CircuitBreakerRegistry` (non l'annotazione AOP, rischio Boot 4 — vedi `docs/agent-log.md` #2/#7); fallback `PAYMENT_PENDING`; `OrderRecoverySweeper` con bounded-park money-safe; `@Version` + migration V2 contro eventi duplicati. Difetti del primo cut (4xx park-infinito, money-leak allargato, batch-abort, @Version non testato) trovati da review adversarial e corretti — vedi `agent-log.md` #7. Restano #2/#3/#4.
 
 Obiettivo: quando Payments è giù/lento, **contenere** il guasto (non propagarlo). L'ordine viene **parcheggiato** in `PAYMENT_PENDING` e ripreso quando il breaker richiude.
 
@@ -53,7 +55,7 @@ Obiettivo: quando Payments è giù/lento, **contenere** il guasto (non propagarl
 **1.3 — Circuit breaker sul gateway Payments + fallback**
 - Cosa: annotare `HttpPaymentsGateway.authorize` con `@CircuitBreaker(name="payments", fallbackMethod="authorizeUnavailable")`; il fallback ritorna un sentinella `AuthorizationResult("UNAVAILABLE", false)`.
 - 📘 Stati CLOSED/OPEN/HALF_OPEN; *"il breaker protegge il chiamante e il downstream insieme"*, abilita il fast-fail (deck 11, slide 17-19). Il fallback è la *safe failure behavior* senza cui il breaker è inutile (slide 17).
-- ✅ Vincolo deck 10: lo stato del breaker **deve essere osservabile** (vedi §7).
+- ✅ Vincolo deck 10: lo stato del breaker **deve essere osservabile** (vedi #7).
 - 🔁 In-place su `HttpPaymentsGateway` (`Gateways.kt:95-111`) → resta **un solo bean** di produzione e i fake `@Primary` dei test continuano a sovrascriverlo. Le deps R4j ci sono già (`build.gradle.kts:46-48`).
 - ⚙️ **Importante (correttezza):** `RestClient.retrieve()` lancia su 4xx/5xx e i timeout lanciano → il breaker conta **solo** guasti di trasporto. Un `DECLINED` è un 200 con body → niente eccezione → **non** apre il breaker (è una decisione di business, non un guasto).
 - ☑️ Con downstream sano: comportamento invariato. Con downstream guasto: fallback → `UNAVAILABLE`.
@@ -76,7 +78,7 @@ Obiettivo: quando Payments è giù/lento, **contenere** il guasto (non propagarl
 - 📘 Soglie del prof (slide 17): **apre quando >50% di fault nella finestra recente** (o P99 > 2s); poi resta aperto un breve periodo; HALF_OPEN fa passare poche chiamate di prova.
 - ⚙️ Valori coerenti: `sliding-window-type: COUNT_BASED`, `sliding-window-size: 10`, `minimum-number-of-calls: 5`, `failure-rate-threshold: 50`, `wait-duration-in-open-state: PT10S`, `permitted-number-of-calls-in-half-open-state: 2`, `automatic-transition-from-open-to-half-open-enabled: true`. **Le soglie sono una scelta di team** → annotarle in `docs/design.md` decisione 7 (policy sul coding agentico: i giudizi li possiede il team).
 - 🔁 Struttura `management`/`app` già in `application.yml:37-72`.
-- ☑️ Il test funzionale (§5.1) verifica che le soglie siano effettivamente bound (non i default R4j).
+- ☑️ Il test funzionale (#5.1) verifica che le soglie siano effettivamente bound (non i default R4j).
 
 **1.7 — Il breaker non deve influenzare le probe**
 - Cosa: disabilitare l'health indicator del breaker (`management.health.circuitbreakers.enabled: false`).
@@ -90,7 +92,17 @@ Obiettivo: quando Payments è giù/lento, **contenere** il guasto (non propagarl
 
 ---
 
-## 2. Timeout + Retry (backoff + jitter) + Bulkhead
+## 2. Timeout + Retry (backoff + jitter) + Bulkhead — ✅ FATTO (2026-06-26)
+
+> **Stato: IMPLEMENTATO e testato** (27/27 test verdi nel servizio `orders`, +7 vs #1). Decorazione **programmatica**
+> (come #1) via un helper riusabile `GatewayResilience` che compone `Retry( CircuitBreaker( Bulkhead( call ) ) )` con i
+> `decorateCallable` per-modulo (il builder `Decorators` è in `resilience4j-all`, non a classpath → non usato).
+> **Retry** transport-only (max-attempts 3, 200ms exp×2+jitter; mai 4xx/business/breaker-open/bulkhead-full), valori
+> SLO-bounded (più corti dei letterali 1s/2s/4s della slide, giustificato dal budget e2e — vedi `design.md` dec.7).
+> **Bulkhead** semaforo separato payments(8)/inventory(16), fail-fast; `BulkheadFullException` ignorata dal breaker.
+> Scope = **entrambi i gateway** (breaker resta solo Payments). NB: il testo sotto (#2.2/#2.4) cita le **annotazioni**
+> `@Retry`/`@Bulkhead` — scelta **superata** dalla decorazione programmatica di #1 (rischio AOP non-weave su Boot 4).
+> Restano #3 (429) e #4 (refund/void).
 
 Obiettivo: ogni chiamata remota bounded, ritentata in modo sicuro, isolata per dominio di guasto.
 
@@ -110,7 +122,7 @@ Obiettivo: ogni chiamata remota bounded, ritentata in modo sicuro, isolata per d
 - Cosa: abilitare il retry esclusivamente sulle chiamate idempotenti.
 - 📘 *"Retry only when the operation is idempotent, deduplicated, or protected by an idempotency key"* (slide 22).
 - 🔁 Già garantito: Inventory dedup `UNIQUE(order_id, product_id)`, Payments `UNIQUE(order_id)` (decisione design #6). Un retry di `authorize`/`reserve` non doppia addebiti/prenotazioni. **Documentare questo legame** è metà del punteggio del Pilastro B/C.
-- ☑️ Test: N retry della stessa authorize → un solo addebito (§5.3).
+- ☑️ Test: N retry della stessa authorize → un solo addebito (#5.3).
 
 **2.4 — Bulkhead per isolare i pool**
 - Cosa: `@Bulkhead(name="payments")` e `@Bulkhead(name="inventory")` distinti, così un Payments lento non esaurisce le risorse usate per Inventory.
@@ -129,11 +141,20 @@ Obiettivo: ogni chiamata remota bounded, ritentata in modo sicuro, isolata per d
 - 📘 *"Retrying without backoff or circuit breaking converts a partial failure into a full retry storm"* (slide 45).
 - ☑️ Con breaker OPEN, `authorize` fa fast-fail → fallback, non 5 tentativi inutili.
 
-**2.7 — Metriche di retry/bulkhead** → vedi §7.
+**2.7 — Metriche di retry/bulkhead** → vedi #7.
 
 ---
 
-## 3. Backpressure / Load shedding (HTTP 429)
+## 3. Backpressure / Load shedding (HTTP 429) — ✅ FATTO (2026-06-26)
+
+> **Stato: IMPLEMENTATO e testato.** Rate limiter Resilience4j sull'edge `POST /api/orders`, applicato
+> **PROGRAMMATICAMENTE** via `RateLimiterRegistry` (mirror di `GatewayResilience`, stesso motivo Boot-4 AOP —
+> agent-log #2), in un nuovo componente `OrdersIntakeRateLimiter` (`withPermit{}`); oltre budget → shed:
+> counter `orders_intake_shed_total` + `IntakeOverloadedException` → mappata dal controller a **HTTP 429 +
+> `Retry-After`** (header derivato dalla finestra del limiter, mai un magic number). `timeout-duration: PT0S`
+> = rifiuto immediato, niente coda. Health indicator del limiter disabilitato (`management.health.ratelimiters.enabled:
+> false`) come per il breaker (#1.7): lo shedding è il sistema che funziona, non deve flippare la readiness.
+> Test funzionale via MockMvc (202 poi 429+Retry-After+counter, deterministico con budget 1/PT1M). Restano #4 (refund/void) e #5.
 
 Obiettivo: sotto sovraccarico, rifiutare lavoro in modo controllato invece di accodare fino al collasso.
 
@@ -156,7 +177,7 @@ Obiettivo: sotto sovraccarico, rifiutare lavoro in modo controllato invece di ac
 - 🔁 I loop coroutine già sospendono fuori dal `try` per onorare la cancellazione (`ReservationReconciler.kt:40-49`).
 - ☑️ Allo shutdown nessun task orfano (già vero per reconciler/sweeper).
 
-**3.4 — Metrica di shedding** → `orders_intake_shed_total` (vedi §7).
+**3.4 — Metrica di shedding** → `orders_intake_shed_total` (vedi #7).
 
 **3.5 — Dove NON mettere il 429**
 - Cosa: il 429 va sull'**ingresso** (intake), non sulle chiamate interne del saga (lì agiscono breaker/bulkhead). Documentare la distinzione.
@@ -164,7 +185,22 @@ Obiettivo: sotto sovraccarico, rifiutare lavoro in modo controllato invece di ac
 
 ---
 
-## 4. Compensazione refund/void per `RESERVATION_EXPIRED`
+## 4. Compensazione refund/void per `RESERVATION_EXPIRED` — ✅ FATTO (2026-06-26)
+
+> **Stato: IMPLEMENTATO e testato** (orders 31/31, payments 11/11 verdi). Void = **transizione idempotente
+> `AUTHORIZED → VOIDED`** sull'aggregato Payments esistente (`PaymentsService.void` + `POST
+> /api/payments/authorizations/{orderId}/void`), **non** una tabella reversal; **nessuna migration** (`VOIDED`
+> entra in `status VARCHAR(16)` senza CHECK); **nessun evento** (eventi Payments best-effort, nessun consumer).
+> Il gateway `payments.void` riusa l'istanza R4j `payments` (breaker+bulkhead+retry) con la **stessa ladder
+> fallback a 4 rami** di `authorize` (404→`NOT_FOUND` benigno). **Void fallito = Opzione B (decisione team):** non
+> si rigetta con addebito vivo — si **parcheggia** (`PAYMENT_PENDING`) e `OrderRecoverySweeper` ri-guida la saga e
+> **ritenta il void** fino a `VOIDED`. Anche al confine `max-park` il sweep rigetta solo a money-state risolto
+> (`VOIDED`/`NOT_FOUND`/`DECLINED`), altrimenti (Payments irraggiungibile) **resta parcheggiato e ritenta**
+> (`orders_recovery_total{outcome=void_retry}`) — money-safety sopra la bounded-retention (audit, `agent-log.md` #11).
+> Ramo stage-2 `"VOIDED" → reject(RESERVATION_EXPIRED)` per la crash-window. Metriche:
+> `orders_compensations_total{type="refund"}` + `payments_voids_total{outcome}`. Lost-update guard (`@Version`)
+> differito (money-safe senza, manterrebbe migration-free). Il primo design (reject-always + contatore) **osservava**
+> solo il leak: colto da review avversariale a 3 lenti → vedi `docs/agent-log.md` #9. Restano #5 (test) e #6/#7.
 
 Obiettivo: chiudere il buco del saga — se la prenotazione è scaduta dopo l'addebito, va stornato.
 
@@ -189,11 +225,23 @@ Obiettivo: chiudere il buco del saga — se la prenotazione è scaduta dopo l'ad
 - 📘 Ogni chiamata remota ha deadline e, se idempotente, può ritentare (slide 22).
 - ☑️ Un void fallito transitoriamente viene ritentato senza doppio storno.
 
-**4.5 — Metrica + test** → `orders_compensations_total{type="refund"}` (§7) + test (§5.4).
+**4.5 — Metrica + test** → `orders_compensations_total{type="refund"}` (#7) + test (#5.4).
 
 ---
 
-## 5. Test funzionali della resilienza
+## 5. Test funzionali della resilienza — ✅ FATTO (2026-06-26)
+
+> **Stato: COMPLETO** (62 test verdi sui 5 servizi). Gran parte costruita **interleaved** con #1-#4; una gap-analysis
+> a 3 lenti + verifica manuale ha confermato 4/6 criteri già coperti e chiuso i 3 gap residui. **5.1** CB funzionale →
+> `PaymentsCircuitBreakerTest` (OPEN→short-circuit→half-open→CLOSED deterministico + 5 soglie yml non-default pinnate;
+> + `PaymentsGatewayBreakerIntegrationTest`). **5.2** parking/recovery → `OrderSagaTest`. **5.3** retry+idempotenza →
+> **nuovo** `PaymentsRetryIdempotencyIntegrationTest` (stub idempotente + risposta persa post-commit → ritrasmissione →
+> **1 solo addebito**; **falsificabile**: senza dedup diventa rosso) che cabla il legame slide-22 in un solo flusso
+> (prima provato solo per composizione). **5.4** compensazione → `OrderSagaTest` (void-before-reject). **5.5** gating →
+> orders già completo (14/14 `app.recovery.enabled=false`); chiuso il buco **inventory**: aggiunto enabled-gate a
+> `ReservationReconciler` (mirror di `OrderRecoverySweeper`) + `inventory.reservation.enabled=false` nei 3 test inventory
+> (race-free per gating, non più per timing). **5.6** tracciabilità → `capstone-configuration-g03/docs/chaos/test-traceability.md`
+> (mappa ogni test → esperimento 01-05 + ipotesi condivisa) + `@Tag("chaos-NN")` sui test mappati. Vedi `agent-log.md` se emergono note.
 
 Obiettivo del prof: **provare il comportamento**, non l'esistenza dei bean. Ogni test = un'ipotesi verificabile (metodo scientifico del chaos, slide 41).
 
@@ -311,12 +359,12 @@ Mappa ai punti ☐ di `capstone-configuration-g03/docs/capstone-dod.md` (oggi tu
 
 | DoD item (Pillar C) | Coperto da | Spunta quando |
 |---|---|---|
-| Circuit breaker Orders→Payments (open/half-open + fallback) | §1 | test §5.1 verde + metrica §7.1 |
-| Bulkheads isolano i pool | §2.4 | test isolamento + metrica bulkhead |
-| Timeout + retry bounded con backoff **e jitter** | §2.1-2.2 | config R4j + test §5.3 |
-| Backpressure / load shedding (429) | §3 | 429 osservato + metrica §3.4 |
-| Graceful degradation (Notifications giù → checkout OK) | §6.6 | test/validazione |
-| Probe deliberate; PDB; topology spread; HPA | §6 | validazione live (Fase 3) |
+| Circuit breaker Orders→Payments (open/half-open + fallback) | #1 | test #5.1 verde + metrica #7.1 |
+| Bulkheads isolano i pool | #2.4 | test isolamento + metrica bulkhead |
+| Timeout + retry bounded con backoff **e jitter** | #2.1-2.2 | config R4j + test #5.3 |
+| Backpressure / load shedding (429) | #3 | 429 osservato + metrica #3.4 |
+| Graceful degradation (Notifications giù → checkout OK) | #6.6 | test/validazione |
+| Probe deliberate; PDB; topology spread; HPA | #6 | validazione live (Fase 3) |
 
 **Vincoli di consegna del corso** (Lab01-04, deck 02): `just verify` verde, `just test-all` verde, **CI verde**, immagini immutabili, **zero credenziali cluster in CI**, ogni scelta non ovvia annotata in `docs/` (è lì che si prende il voto). Aggiornare anche `docs/design.md` (decisione 7: policy CB/retry/bulkhead) e `docs/agent-log.md` se emerge un errore reale dell'agente durante l'implementazione.
 
@@ -351,16 +399,16 @@ Circuit breaker 11/17-19 · Bulkhead 11/20 · Timeout 11/22 · Retry 11/22 · Ba
 - Schema → `services/orders/.../V1__baseline.sql:9` (`status VARCHAR(16)`)
 
 ### D — Ordine di esecuzione consigliato
-1. **§1 Circuit breaker + PAYMENT_PENDING** (keystone; abilita chaos #1).
-2. **§2 Timeout/Retry/Bulkhead** (completa la difesa sulla stessa chiamata).
-3. **§4 Compensazione refund** (chiude il TODO del saga).
-4. **§3 Load shedding 429** (difesa all'edge).
-5. **§5 Test funzionali** — in parallelo a ogni feature (1-4), non alla fine.
-6. **§7 Observability lato codice** — insieme a ogni feature (metrica per policy).
-7. **§6 Validazione K8s** — **dipende dalla Fase 3** (cluster); le scelte si rivedono ora, la prova live dopo.
+1. **#1 Circuit breaker + PAYMENT_PENDING** (keystone; abilita chaos #1).
+2. **#2 Timeout/Retry/Bulkhead** (completa la difesa sulla stessa chiamata).
+3. **#4 Compensazione refund** (chiude il TODO del saga).
+4. **#3 Load shedding 429** (difesa all'edge).
+5. **#5 Test funzionali** — in parallelo a ogni feature (1-4), non alla fine.
+6. **#7 Observability lato codice** — insieme a ogni feature (metrica per policy).
+7. **#6 Validazione K8s** — **dipende dalla Fase 3** (cluster); le scelte si rivedono ora, la prova live dopo.
 
-**Eseguibile ORA in locale (H2, zero dipendenze):** §1, §2, §4, §5, §7-codice → `just test-all` / `just run orders` + `GET /actuator/prometheus`.
-**Richiede cluster (Fase 3/4):** §6 (prova live di probe/PDB/HPA/drain) e dashboard/alert di §7.2/7.4.
+**Eseguibile ORA in locale (H2, zero dipendenze):** #1, #2, #4, #5, #7-codice → `just test-all` / `just run orders` + `GET /actuator/prometheus`.
+**Richiede cluster (Fase 3/4):** #6 (prova live di probe/PDB/HPA/drain) e dashboard/alert di #7.2/7.4.
 
 ---
 
@@ -374,42 +422,42 @@ Tutto ciò che non li tocca è parallelizzabile senza merge conflict.
 
 | Punto | Parallelizzabile | File toccati | Conflitto con | Track |
 |---|---|---|---|---|
-| **§1** CB + PAYMENT_PENDING | ✅ con §3 / §4a / §6 — ❌ con §2 | `Order.kt`, `OrderStateMachine.kt`, `OrderSaga.kt` (stage 2), `Gateways.kt` (authorize), `OrderRecoverySweeper.kt` (nuovo), `Repositories.kt`, `application.yml` (circuitbreaker+recovery) | §2, §4b | **A** |
-| **§2** Retry + Bulkhead | ❌ con §1 (**va DOPO**) | `Gateways.kt` (stesso `authorize`), `application.yml` (stesso blocco resilience4j) | §1, §4b | **A** |
-| **§3** Backpressure 429 | ✅ con tutto | `OrdersController.kt`, `application.yml` (ratelimiter) | nessuno (file/metodo diversi) | **B** |
-| **§4** Refund/void | ⚠️ **SPLIT** (vedi sotto) | 4a: servizio Payments · 4b: `OrderSaga.kt`/`Gateways.kt` | 4b con §1/§2 | **A**+**B** |
-| **§5** Test funzionali | ↪️ segue ogni feature (interleaved) | test di Orders / Payments | la feature relativa | chi fa la feature |
-| **§6** Validazione K8s | ✅ con tutto (repo diverso) | chart in `capstone-configuration-g03` (review) | nessuno (codice app intatto) | **B** |
-| **§7** Observability | ↪️ interleaved + cross-cutting su **B** | metrica per feature; naming/exposure | la feature relativa | chi fa la feature / **B** |
+| **#1** CB + PAYMENT_PENDING | ✅ con #3 / #4a / #6 — ❌ con #2 | `Order.kt`, `OrderStateMachine.kt`, `OrderSaga.kt` (stage 2), `Gateways.kt` (authorize), `OrderRecoverySweeper.kt` (nuovo), `Repositories.kt`, `application.yml` (circuitbreaker+recovery) | #2, #4b | **A** |
+| **#2** Retry + Bulkhead | ❌ con #1 (**va DOPO**) | `Gateways.kt` (stesso `authorize`), `application.yml` (stesso blocco resilience4j) | #1, #4b | **A** |
+| **#3** Backpressure 429 | ✅ con tutto | `OrdersController.kt`, `application.yml` (ratelimiter) | nessuno (file/metodo diversi) | **B** |
+| **#4** Refund/void | ⚠️ **SPLIT** (vedi sotto) | 4a: servizio Payments · 4b: `OrderSaga.kt`/`Gateways.kt` | 4b con #1/#2 | **A**+**B** |
+| **#5** Test funzionali | ↪️ segue ogni feature (interleaved) | test di Orders / Payments | la feature relativa | chi fa la feature |
+| **#6** Validazione K8s | ✅ con tutto (repo diverso) | chart in `capstone-configuration-g03` (review) | nessuno (codice app intatto) | **B** |
+| **#7** Observability | ↪️ interleaved + cross-cutting su **B** | metrica per feature; naming/exposure | la feature relativa | chi fa la feature / **B** |
 
-### Lo split di §4 (refund/void) — la chiave del parallelismo
-- **§4a (Track B, indipendente):** nuovo endpoint idempotente `POST /api/payments/authorizations/{orderId}/void` nel **servizio Payments** (`PaymentsController.kt`, `PaymentsService.kt`, payments `application.yml`). Repo/servizio diverso → **zero overlap** col core di A. Parallelo da subito.
-- **§4b (Track A, dopo §1):** chiamata di compensazione nel saga + metodo client `payments.void(...)` nel gateway (`OrderSaga.kt:58-64`, `Gateways.kt`). Tocca il core conteso → owner A.
+### Lo split di #4 (refund/void) — la chiave del parallelismo
+- **#4a (Track B, indipendente):** nuovo endpoint idempotente `POST /api/payments/authorizations/{orderId}/void` nel **servizio Payments** (`PaymentsController.kt`, `PaymentsService.kt`, payments `application.yml`). Repo/servizio diverso → **zero overlap** col core di A. Parallelo da subito.
+- **#4b (Track A, dopo #1):** chiamata di compensazione nel saga + metodo client `payments.void(...)` nel gateway (`OrderSaga.kt:58-64`, `Gateways.kt`). Tocca il core conteso → owner A.
 - **Handshake:** A e B **concordano il contratto API del void** (path, body, risposta idempotente) PRIMA di iniziare, poi costruiscono in parallelo e integrano. È il pattern saga già usato (Inventory `release`).
 
 ### Due track concreti
 
 **Track A — "Core money-path" (owner unico di `OrderSaga.kt`, `Gateways.kt`, orders `application.yml`)**
-1. §1 Circuit breaker + PAYMENT_PENDING (keystone)
-2. §2 Retry + Bulkhead (DOPO §1, stesso metodo/blocco yaml)
-3. §4b compensazione lato saga (chiama l'endpoint di B)
-4. §5 + §7 relativi (test breaker/parking/recovery; metrica `orders_payments_unavailable_total`)
+1. #1 Circuit breaker + PAYMENT_PENDING (keystone)
+2. #2 Retry + Bulkhead (DOPO #1, stesso metodo/blocco yaml)
+3. #4b compensazione lato saga (chiama l'endpoint di B)
+4. #5 + #7 relativi (test breaker/parking/recovery; metrica `orders_payments_unavailable_total`)
 
 **Track B — "Superfici indipendenti" (nessun file in comune con A)**
-1. §3 Backpressure 429 su `OrdersController` + ratelimiter
-2. §4a endpoint `void` nel servizio Payments
-3. §6 review/validazione chart K8s (probe/PDB/HPA/topology) nel config-repo
-4. §7 cross-cutting: convenzione naming metriche, esposizione `/actuator/prometheus`, prep dashboard Fase 4; metrica `orders_intake_shed_total`
+1. #3 Backpressure 429 su `OrdersController` + ratelimiter
+2. #4a endpoint `void` nel servizio Payments
+3. #6 review/validazione chart K8s (probe/PDB/HPA/topology) nel config-repo
+4. #7 cross-cutting: convenzione naming metriche, esposizione `/actuator/prometheus`, prep dashboard Fase 4; metrica `orders_intake_shed_total`
 
 ### Cosa parte SUBITO in contemporanea
-- **A → §1** mentre **B → §3 + §4a** (zero conflitti: file totalmente disgiunti).
-- Poi **A → §2 → §4b** mentre **B → §6 + §7-crosscutting**.
+- **A → #1** mentre **B → #3 + #4a** (zero conflitti: file totalmente disgiunti).
+- Poi **A → #2 → #4b** mentre **B → #6 + #7-crosscutting**.
 
 ### Punti di sincronizzazione (coordinare a voce)
-1. **Contratto API `void`** (A↔B) prima di §4.
+1. **Contratto API `void`** (A↔B) prima di #4.
 2. **Blocco `resilience4j` in orders `application.yml`:** A possiede `circuitbreaker`/`retry`/`bulkhead`/`app.recovery`, B aggiunge **solo** `ratelimiter` → sotto-blocchi distinti, merge banale ma da coordinare (stesso file).
 3. **`docs/`** (`design.md`, `capstone-dod.md`, `agent-log.md`): append-only, ognuno la propria sezione.
 4. **Branch corti** (Lab/DORA): feature branch < 1 giorno, merge su main verde, niente rami lunghi divergenti sul core.
 
 > Regola pratica: **un solo sviluppatore alla volta tocca i 3 file del core.** Se entrambi devono lavorarci,
-> serializzare (A finisce §1, poi B può prendere il core per un task suo) invece di mergiare a forza.
+> serializzare (A finisce #1, poi B può prendere il core per un task suo) invece di mergiare a forza.

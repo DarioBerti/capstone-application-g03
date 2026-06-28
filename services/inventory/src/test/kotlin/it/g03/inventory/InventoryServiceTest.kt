@@ -16,7 +16,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false"])  // boot the full Spring app context to test service + repository wiring
+@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false", "inventory.reservation.enabled=false"])  // boot the full Spring app context; reconciler sweep OFF so it never races the assertions (#5.5)
 class InventoryServiceTest {
 
     // Injects the service under test
