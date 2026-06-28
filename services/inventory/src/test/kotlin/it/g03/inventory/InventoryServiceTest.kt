@@ -144,7 +144,9 @@ class InventoryServiceTest {
         assertEquals(10, available("TRENO-TEST"))
         assertEquals(
             ReservationStatus.EXPIRED,
-            reservations.findByOrderIdAndProductId("order-stranded", "TRENO-TEST")!!.status,
+            requireNotNull(reservations.findByOrderIdAndProductId("order-stranded", "TRENO-TEST")) {
+                "expected a swept reservation for order-stranded/TRENO-TEST"
+            }.status,
         )
     }
 

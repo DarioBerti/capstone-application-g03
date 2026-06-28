@@ -69,7 +69,8 @@ class HttpInventoryGateway(
             .uri("/api/inventory/reservations")
             .body(mapOf("orderId" to orderId, "productId" to productId, "qty" to qty))
             .retrieve()
-            .body(InventoryReservationDto::class.java)!!
+            .body(InventoryReservationDto::class.java)
+            ?: error("empty reserve response from inventory for order=$orderId product=$productId")
         return ReservationResult(dto.status, dto.replayed)
     }
 
@@ -78,7 +79,8 @@ class HttpInventoryGateway(
         val dto = client.post()
             .uri("/api/inventory/reservations/{o}/{p}/confirm", orderId, productId)
             .retrieve()
-            .body(InventoryReservationDto::class.java)!!
+            .body(InventoryReservationDto::class.java)
+            ?: error("empty confirm response from inventory for order=$orderId product=$productId")
         return ReservationResult(dto.status, dto.replayed)
     }
 
@@ -87,7 +89,8 @@ class HttpInventoryGateway(
         val dto = client.post()
             .uri("/api/inventory/reservations/{o}/{p}/release", orderId, productId)
             .retrieve()
-            .body(InventoryReservationDto::class.java)!!
+            .body(InventoryReservationDto::class.java)
+            ?: error("empty release response from inventory for order=$orderId product=$productId")
         return ReservationResult(dto.status, dto.replayed)
     }
 }
@@ -105,7 +108,8 @@ class HttpPaymentsGateway(
             .uri("/api/payments/authorizations")
             .body(mapOf("orderId" to orderId, "amountCents" to amountCents))
             .retrieve()
-            .body(PaymentAuthorizationDto::class.java)!!
+            .body(PaymentAuthorizationDto::class.java)
+            ?: error("empty authorize response from payments for order=$orderId")
         return AuthorizationResult(dto.status, dto.replayed)
     }
 }
