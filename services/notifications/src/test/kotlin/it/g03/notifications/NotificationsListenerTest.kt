@@ -1,5 +1,6 @@
 package it.g03.notifications
 
+import it.g03.notifications.events.NotificationsListener
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.junit.jupiter.api.Test

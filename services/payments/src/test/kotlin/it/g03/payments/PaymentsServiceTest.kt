@@ -1,5 +1,8 @@
 package it.g03.payments
 
+import it.g03.payments.entities.AuthorizationStatus
+import it.g03.payments.repository.PaymentAuthorizationRepository
+import it.g03.payments.service.PaymentsService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test

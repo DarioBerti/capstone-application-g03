@@ -1,5 +1,16 @@
 package it.g03.orders
 
+import it.g03.orders.entities.OrderStatus
+import it.g03.orders.entities.RejectionReason
+import it.g03.orders.events.Topics
+import it.g03.orders.gateway.AuthorizationResult
+import it.g03.orders.gateway.InventoryGateway
+import it.g03.orders.gateway.PaymentsGateway
+import it.g03.orders.gateway.ReservationResult
+import it.g03.orders.repository.OrderRepository
+import it.g03.orders.repository.OutboxEventRepository
+import it.g03.orders.service.OrderSaga
+import it.g03.orders.service.OrderService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

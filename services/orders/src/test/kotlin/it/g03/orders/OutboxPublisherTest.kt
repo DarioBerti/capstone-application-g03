@@ -1,5 +1,9 @@
 package it.g03.orders
 
+import it.g03.orders.entities.OutboxEvent
+import it.g03.orders.events.EventPublisher
+import it.g03.orders.repository.OutboxEventRepository
+import it.g03.orders.service.OutboxPublisher
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

@@ -1,9 +1,9 @@
 package it.g03.catalog
 
-import it.g03.catalog.Controller.ProductFilter
-import it.g03.catalog.Entities.Product
-import it.g03.catalog.Repository.ProductRepository
-import it.g03.catalog.Service.CatalogService
+import it.g03.catalog.controller.ProductFilter
+import it.g03.catalog.entities.Product
+import it.g03.catalog.repository.ProductRepository
+import it.g03.catalog.service.CatalogService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
