@@ -44,6 +44,18 @@ double-charge** (Pillar B).
 - Don't return raw entities; don't let Hibernate own the schema (`validate` only).
 - Don't bake real PSP credentials or amounts into code — take them from config/secrets.
 
+## Source layout
+
+Organize by layer, **one repository per file**, keeping small cohesive types grouped (mirrors the Catalog reference layout):
+
+- `controller/` — REST controllers + their request/response DTOs
+- `service/` — authorization/business logic
+- `repository/` — Spring Data repositories, **one repository per file**
+- `entities/` — JPA entities (`PaymentAuthorization`), one per file
+- `events/` — Kafka publishers and event payloads
+
+Name each file after the type it holds; keep `PaymentsApplication.kt` at the package root.
+
 ## Configuration & testing
 
 PostgreSQL everywhere, env-driven with local-dev defaults; Payments has a **dedicated** datasource

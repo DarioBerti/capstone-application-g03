@@ -40,6 +40,17 @@ is graceful degradation — it lives at the edge of the system, never on the cri
 - Don't add a database/Flyway/JPA unless genuinely required (it would break the stateless contract).
 - Don't assume exactly-once delivery or that an event arrives only once.
 
+## Source layout
+
+Organize by layer, **one repository per file**, keeping small cohesive types grouped (mirrors the Catalog reference layout):
+
+- `service/` — delivery/handler logic (thin today; add as real behaviour appears)
+- `events/` — Kafka listeners and any event payloads
+- `controller/` — only if a thin inspection/demo HTTP surface is added
+
+Stateless by contract: **no `repository/` or `entities/`** (no database). Keep
+`NotificationsApplication.kt` at the package root.
+
 ## Configuration & testing
 
 Stateless: **no datasource, no Flyway** — only Kafka and the standard observability/actuator config,

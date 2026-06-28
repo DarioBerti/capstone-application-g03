@@ -50,6 +50,8 @@ services/<name>/          # one independent Gradle project per service
   Dockerfile              # multi-stage build → runnable jar
   CLAUDE.md               # service-specific domain, events, invariants (see per-service docs)
   src/main/kotlin/it/g03/<name>/   # source, package it.g03.<name>
+    <Name>Application.kt           # entrypoint stays at the package root
+    controller/ service/ repository/ entities/ events/   # layer folders = package segments
   src/main/resources/
     application.yml               # base config
     application-postgres.yml      # cluster profile = env-driven PostgreSQL
@@ -145,6 +147,25 @@ Every service uses all three layers. **A controller never calls a repository dir
 
 Even read-mostly services (e.g. `catalog`) route through a Service. (`catalog` currently shortcuts
 controller → repository — that is debt to fix, not an accepted pattern.)
+
+### Source layout (folders = packages)
+
+Organize each service's source **by layer into folders whose names are the package segments** — see
+`catalog` for the reference layout. `<Svc>Application.kt` stays at the package root `it.g03.<svc>`.
+
+| Folder | Package | Holds |
+|---|---|---|
+| `controller/` | `it.g03.<svc>.controller` | REST controllers + their request/response DTOs |
+| `service/` | `it.g03.<svc>.service` | business logic (services, saga, state machine, outbox relay, reconciler) |
+| `repository/` | `it.g03.<svc>.repository` | Spring Data repositories — **one repository per file** |
+| `entities/` | `it.g03.<svc>.entities` | JPA entities (+ their tightly-bound enums) |
+| `events/` | `it.g03.<svc>.events` | Kafka listeners, publishers, `Topics`, event payloads |
+| `gateway/` | `it.g03.<svc>.gateway` | outbound sync HTTP clients to other services (where present, e.g. `orders`) |
+
+**One repository per file** (never bundle several into a `Repositories.kt`); otherwise keep small
+cohesive types grouped (request/response DTOs with their controller, event payloads together). Spring
+component/entity/repository scanning is unaffected — `@SpringBootApplication` scans `it.g03.<svc>` and
+all subpackages.
 
 ### DTOs at the boundary
 Never expose JPA entities directly. Define request/response `data class` DTOs in the controller layer

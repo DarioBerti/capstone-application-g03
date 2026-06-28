@@ -45,6 +45,18 @@ share only the `productId` vocabulary (database-per-service), never each other's
   ever does, it must not compromise the "off the money path" invariant above.
 - Don't make checkout, Orders, or Inventory block on a Catalog response.
 
+## Source layout
+
+Organize by layer, **one repository per file**, keeping small cohesive types grouped:
+
+- `controller/` — REST controllers + their request/response DTOs
+- `service/` — business/query logic
+- `repository/` — Spring Data repositories, **one repository per file** (never bundle several into a `Repositories.kt`)
+- `entities/` — JPA entities, one entity per file
+
+Name each file after the type it holds; keep `CatalogApplication.kt` at the package root. **This service
+is the reference layout** — the other services should match it.
+
 ## Configuration & testing
 
 PostgreSQL everywhere, env-driven with local-dev defaults (see root CLAUDE.md for the injection

@@ -47,6 +47,19 @@ a reason). Package `it.g03.orders`. This is the critical path — SLOs, tracing,
 - Don't block the synchronous accept on the whole saga; accept, then process asynchronously.
 - Don't hardcode collaborator addresses or business amounts — take them from config.
 
+## Source layout
+
+Organize by layer, **one repository per file**, keeping small cohesive types grouped (mirrors the Catalog reference layout):
+
+- `controller/` — REST controllers + their request/response DTOs
+- `service/` — business logic (the saga, state machine, outbox relay)
+- `repository/` — Spring Data repositories, **one repository per file** (split today's `Repositories.kt`)
+- `entities/` — JPA entities (`Order`, `OutboxEvent`, …), one per file
+- `events/` — Kafka listeners, publishers, event payloads
+- `gateway/` — outbound sync HTTP clients to Inventory/Payments
+
+Name each file after the type it holds; keep `OrdersApplication.kt` at the package root.
+
 ## Configuration & testing
 
 PostgreSQL everywhere, env-driven with local-dev defaults; Orders has a **dedicated** datasource (money
