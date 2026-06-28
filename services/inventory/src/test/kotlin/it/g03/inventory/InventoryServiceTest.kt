@@ -1,5 +1,11 @@
 package it.g03.inventory
 
+import it.g03.inventory.entities.InventoryItem
+import it.g03.inventory.entities.Reservation
+import it.g03.inventory.entities.ReservationStatus
+import it.g03.inventory.repository.InventoryItemRepository
+import it.g03.inventory.repository.ReservationRepository
+import it.g03.inventory.service.InventoryService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

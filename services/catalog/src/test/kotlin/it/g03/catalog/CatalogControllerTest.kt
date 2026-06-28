@@ -1,14 +1,20 @@
 package it.g03.catalog
 
+import it.g03.catalog.controller.CatalogController
+import it.g03.catalog.controller.ProductFilter
+import it.g03.catalog.entities.Product
+import it.g03.catalog.repository.ProductRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
+import org.springframework.data.domain.PageRequest
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-@SpringBootTest  // boot the full Spring app context to test controller + repository wiring
-
+@SpringBootTest  // boot the full Spring app context to test controller -> service -> repository wiring
+@Import(TestcontainersConfiguration::class)
 class CatalogControllerTest {
 
     // Injects the controller under test
@@ -22,10 +28,12 @@ class CatalogControllerTest {
         products.save(Product("TRENO-TEST", "Test departure", 1500))
     }
 
-    // Verifies the two "happy-path" controller endpoints: list all products and fetch one by id
+    // Verifies the two "happy-path" controller endpoints: paginated list and fetch one by id
     @Test
     fun `lists and fetches products`() {
-        assertEquals(1, controller.all().size)
+        val page = controller.list(ProductFilter(), PageRequest.of(0, 20))
+        assertEquals(1, page.totalElements.toInt())
+        assertEquals("TRENO-TEST", page.content.single().productId)
         assertEquals(1500, controller.byId("TRENO-TEST").priceCents)
     }
 

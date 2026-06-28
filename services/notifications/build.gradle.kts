@@ -25,8 +25,10 @@ dependencies {
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("tools.jackson.module:jackson-module-kotlin")
 
-	// Fully asynchronous: Kafka consumer + coroutines. Notifications owns (almost) no state
-	implementation("org.springframework.kafka:spring-kafka")
+	// Fully asynchronous: Kafka consumer + coroutines. Notifications owns (almost) no state. The starter
+	// pulls in spring-kafka AND Boot 4's Kafka auto-configuration (module spring-boot-kafka) — bare
+	// spring-kafka does not auto-configure the Kafka beans under Boot 4's modularized config.
+	implementation("org.springframework.boot:spring-boot-starter-kafka")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 
 	// Observability (Pillar D)
