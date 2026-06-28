@@ -1,9 +1,10 @@
 import Keycloak from 'keycloak-js'
 
 // Single Keycloak client for the SPA. Values come from build-time env (VITE_*) with local-dev defaults
-// that match the dev Keycloak realm. The client is PUBLIC (no secret) and uses Authorization Code + PKCE.
+// that match the dev Keycloak realm (the kind ingress host, also the token issuer). The client is
+// PUBLIC (no secret) and uses Authorization Code + PKCE.
 const keycloak = new Keycloak({
-  url: import.meta.env.VITE_KEYCLOAK_URL ?? 'http://localhost:8180',
+  url: import.meta.env.VITE_KEYCLOAK_URL ?? 'https://auth.localhost',
   realm: import.meta.env.VITE_KEYCLOAK_REALM ?? 'eurotransit',
   clientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? 'eurotransit-frontend',
 })
