@@ -50,6 +50,8 @@ inventory:
     ttl: PT2M
     # how often the reconciler wakes up to sweep overdue holds
     sweep-interval: PT15S
+    # background sweep on/off (Fase 2 #5.5): default true in prod; tests set false so the loop never races assertions
+    enabled: true
 
 # Observability (Pillar D): K8s probes, Prometheus scrape endpoint, OTel tracing
 # OTLP endpoint is a local default; in-cluster it is overridden via env (MANAGEMENT_OTLP_TRACING_ENDPOINT) to point at the collector / Tempo

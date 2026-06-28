@@ -5,17 +5,18 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * The saga aggregate. Order state machine (Pillar A/B):
+ * The saga aggregate. Order state machine (Pillar A/B/C):
  *
  *   PENDING -- reserve ok --> RESERVED -- authorize ok + confirm ok --> CONFIRMED
  *      |                        |
  *      |-- reserve sold-out --> REJECTED(SOLD_OUT)
  *                               |-- authorize declined --> REJECTED(PAYMENT_DECLINED) (+release)
+ *                               |-- authorize UNAVAILABLE (breaker open) --> PAYMENT_PENDING -- retry ok --> CONFIRMED
  *                               |-- hold expired before confirm --> REJECTED(RESERVATION_EXPIRED)
  *
- * PENDING/RESERVED are RESUMABLE states: an at-least-once redelivery of order-placed re-enters the saga from where it crashed (every downstream step is idempotent)
+ * PENDING/RESERVED/PAYMENT_PENDING are RESUMABLE states: an at-least-once redelivery of order-placed (or the recovery sweep) re-enters the saga from where it crashed/parked (every downstream step is idempotent)
  * CONFIRMED/REJECTED are terminal: replays become no-ops
- * (Phase 2 adds a PAYMENT_PENDING parking state as the circuit-breaker fallback)
+ * PAYMENT_PENDING is the circuit-breaker fallback (Pillar C): Payments is unavailable, so the order is PARKED — the seats stay held within their TTL — instead of rejecting a customer whose card may be fine; [OrderRecoverySweeper] retries it once the breaker closes
  */
 
 @Entity // maps this class to a database table (JPA entity)
@@ -54,10 +55,15 @@ data class Order(
     // last time the status/reason changed (bumped on every transition)
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Instant = Instant.now(),
+
+    // Optimistic-lock guard (Pillar C): the recovery sweep adds a SECOND saga driver alongside Kafka redelivery, so two handle() runs can race on the same order. @Version makes the loser of a concurrent terminal transition fail at commit (ObjectOptimisticLockingFailureException → rollback) instead of appending a duplicate order-confirmed/notification to the outbox. JPA manages the column; never set it by hand.
+    @Version
+    @Column(nullable = false)
+    var version: Long = 0,
 )
 
-// saga states: PENDING/RESERVED are resumable, CONFIRMED/REJECTED are terminal
-enum class OrderStatus { PENDING, RESERVED, CONFIRMED, REJECTED }
+// saga states: PENDING/RESERVED/PAYMENT_PENDING are resumable, CONFIRMED/REJECTED are terminal
+enum class OrderStatus { PENDING, RESERVED, PAYMENT_PENDING, CONFIRMED, REJECTED }
 
 // mutually-exclusive reasons an order can end up REJECTED
 enum class RejectionReason { SOLD_OUT, PAYMENT_DECLINED, RESERVATION_EXPIRED }
