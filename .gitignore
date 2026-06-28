@@ -3,5 +3,5 @@
 Thumbs.db
 .idea/
 .vscode/
-
+.env
 # Per-service Gradle build artifacts are ignored by each service's own .gitignore
