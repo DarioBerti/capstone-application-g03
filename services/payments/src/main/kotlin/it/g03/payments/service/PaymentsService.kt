@@ -17,9 +17,6 @@ import java.util.UUID
 // Outcome of an authorize call; "replayed = true" means the idempotent replay path fired
 data class AuthorizeOutcome(val authorization: PaymentAuthorization, val replayed: Boolean)
 
-// Outcome of a void (reversal) call; "replayed = true" means no new reversal happened (already voided / nothing to reverse)
-data class VoidOutcome(val authorization: PaymentAuthorization, val replayed: Boolean)
-
 // payment-authorized event payload (informational; see EventPublishing.kt)
 data class PaymentAuthorizedEvent(
     val eventId: UUID = UUID.randomUUID(),
@@ -43,11 +40,6 @@ class PaymentsService(
     // Helper to increments the per-outcome counter (authorized/declined/replayed) for observability
     private fun outcomes(outcome: String) =
         meterRegistry.counter("payments_authorizations_total", "outcome", outcome)
-
-    // Void (reversal) gets its OWN metric name so the authorize RED series stays clean (one-name-per-concern, deck 10):
-    // outcome = voided | replayed | noop_declined
-    private fun voidOutcomes(outcome: String) =
-        meterRegistry.counter("payments_voids_total", "outcome", outcome)
 
     /**
      * STRICT idempotency ("mustn't double-charge", Pillar B) -> same pattern as Inventory.reserve:
@@ -90,42 +82,6 @@ class PaymentsService(
     fun find(orderId: String): PaymentAuthorization =
         authorizations.findByOrderId(orderId)
             ?: throw NoSuchElementException("no authorization for order=$orderId")
-
-    /**
-     * VOID (reversal) of a previously AUTHORIZED charge — the saga compensation for a hold that expired AFTER authorize
-     * (Pillar B/C, Fase 2 #4). IDEMPOTENT, same shape as [authorize] (read-modify-write in one transaction):
-     * - no authorization for this order -> domain not-found (404); defensive — the saga reaches void only after a 200 AUTHORIZED, so the row always exists;
-     * - already VOIDED -> idempotent replay (no second reversal, charge moved once);
-     * - AUTHORIZED -> reverse it: AUTHORIZED -> VOIDED on the SAME aggregate (immutable copy + save, preserving createdAt);
-     * - DECLINED -> nothing was ever charged, so the void is a no-op (idempotent) and the row stays DECLINED.
-     * No external PSP call and no event (the saga decision travels in the synchronous response), so a duplicate void is
-     * safe even without optimistic locking
-     */
-    @Transactional
-    fun void(orderId: String): VoidOutcome {
-        val auth = authorizations.findByOrderId(orderId)
-            ?: throw NoSuchElementException("no authorization for order=$orderId")
-
-        return when (auth.status) {
-            AuthorizationStatus.VOIDED -> {
-                voidOutcomes("replayed").increment()
-                log.info("void replay for order={} -> already VOIDED", orderId)
-                VoidOutcome(auth, replayed = true)
-            }
-            AuthorizationStatus.AUTHORIZED -> {
-                val voided = authorizations.save(auth.copy(status = AuthorizationStatus.VOIDED))
-                voidOutcomes("voided").increment()
-                log.info("void order={} -> AUTHORIZED reversed to VOIDED", orderId)
-                VoidOutcome(voided, replayed = false)
-            }
-            AuthorizationStatus.DECLINED -> {
-                // No charge ever happened on a DECLINED authorization -> nothing to reverse (idempotent no-op)
-                voidOutcomes("noop_declined").increment()
-                log.info("void order={} -> no-op (authorization was DECLINED, no charge)", orderId)
-                VoidOutcome(auth, replayed = true)
-            }
-        }
-    }
 
     /**
      * Publish only AFTER the surrounding transaction commits: publishing inside the transaction could announce an authorization that then rolls back (ghost event)

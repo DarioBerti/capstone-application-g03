@@ -152,13 +152,6 @@ class InventoryService(
         return overdue.size
     }
 
-    // Read the current reservation (its own short transaction). Used by the controller to re-read the now-terminal
-    // state after a confirm/release lost the optimistic-lock race to the reconciler (see InventoryController)
-    @Transactional(readOnly = true)
-    fun find(orderId: String, productId: String): Reservation =
-        reservations.findByOrderIdAndProductId(orderId, productId)
-            ?: throw NoSuchElementException("no reservation for order=$orderId product=$productId")
-
     // Convenience wrapper: emit the inventory-released event for a reservation (released | expired)
     private fun publishReleasedAfterCommit(r: Reservation, reason: String) =
         publishAfterCommit(

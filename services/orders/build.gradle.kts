@@ -88,9 +88,3 @@ allOpen {
 tasks.withType<Test> {
 	useJUnitPlatform()
 }
-
-// Spring Boot's `jar` task also emits a *-plain.jar; disable it so the Dockerfile's
-// `COPY build/libs/*.jar app.jar` glob matches exactly one file (the runnable bootJar).
-tasks.named("jar") {
-	enabled = false
-}

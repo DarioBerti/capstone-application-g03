@@ -46,16 +46,6 @@ data class Reservation(
 
     @Column(name = "expires_at", nullable = false)  // TTL deadline: after this the reconciler may sweep it
     val expiresAt: Instant = Instant.EPOCH,
-
-    // Optimistic-lock guard (Pillar B): the terminal transitions RESERVED→{CONFIRMED,RELEASED,EXPIRED} each do a
-    // read-then-(status-flip + ADDITIVE restock). Two drivers can race the SAME reservation — a late confirm vs the
-    // reconciler, or two reconcilers (inventory runs >1 replica). Without this, both pass the status guard and BOTH
-    // restock (additive, non-convergent) → phantom availability → oversell. @Version makes the loser fail at flush
-    // (ObjectOptimisticLockingFailureException → rollback) BEFORE its restock runs (restock is @Modifying
-    // flushAutomatically, so the versioned UPDATE flushes first). JPA manages the column; never set it by hand.
-    @Version
-    @Column(nullable = false)
-    var version: Long = 0,
 )
 
 // The reservation lifecycle states (see the state machine in the class doc above)

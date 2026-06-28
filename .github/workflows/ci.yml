@@ -53,13 +53,6 @@ jobs:
       # Build the JSON list of services that should be processed by the build matrix
       - name: Assemble changed-service list
         id: changed
-        # Pass the paths-filter JSON through an env var: interpolating ${{ ... }} straight into a
-        # double-quoted `echo "services=..."` lets the JSON's own double-quotes terminate the bash
-        # string, so the value is exported UNQUOTED (invalid JSON) and fromJSON in the build matrix
-        # errors out (the whole workflow then fails in ~12s before any build). Via $CHANGES the JSON
-        # reaches the shell intact.
-        env:
-          CHANGES: ${{ steps.filter.outputs.changes }}
         run: |
           # On manual dispatch, rebuild everything; otherwise use the changed services.
           # `steps.filter.outputs.changes` (from dorny/paths-filter) is already a JSON array of the filter names that matched, e.g. ["orders","inventory"].
@@ -67,7 +60,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo 'services=["catalog","orders","inventory","payments","notifications"]' >> "$GITHUB_OUTPUT"
           else
-            echo "services=$CHANGES" >> "$GITHUB_OUTPUT"
+            echo "services=${{ steps.filter.outputs.changes }}" >> "$GITHUB_OUTPUT"
           fi
 
   # 2 — Test, build and push one image per changed service (in parallel)

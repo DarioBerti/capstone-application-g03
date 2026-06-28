@@ -1,18 +1,15 @@
 package it.g03.inventory
 
 import it.g03.inventory.entities.InventoryItem
-import it.g03.inventory.entities.Reservation
 import it.g03.inventory.entities.ReservationStatus
 import it.g03.inventory.repository.InventoryItemRepository
 import it.g03.inventory.repository.ReservationRepository
 import it.g03.inventory.service.InventoryService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import java.time.Instant
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -24,8 +21,7 @@ import kotlin.test.assertTrue
  * N concurrent transactions race for 1 remaining seat: the atomic conditional UPDATE must let EXACTLY ONE win, regardless of interleaving. This is the in-process proof of the invariant; the chaos experiment later reproduces it under pod kill in the cluster
  */
 
-@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false", "inventory.reservation.enabled=false"])  // boot the full Spring app context; reconciler sweep OFF so it never races the seat-count assertions (#5.5)
-@Tag("chaos-02") // anticipates chaos #2 (inventory-podkill): concurrent/redelivered ops never oversell, restock once
+@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false"])  // boot the full Spring app context to test the concurrent reserve wiring end-to-end
 class InventoryConcurrencyTest {
 
     // Injects the service under test
@@ -103,54 +99,5 @@ class InventoryConcurrencyTest {
         assertTrue(committed.isNotEmpty(), "at least one delivery must commit")
         assertEquals(4, items.findById("DUP-SEAT").orElseThrow().available, "one decrement only")
         assertEquals(1, reservations.findAll().count { it.orderId == "order-dup" })
-    }
-
-    // Helper: persist an already-expired RESERVED hold of `qty` seats on `product` whose item shows `available` free
-    private fun seedExpiredHold(product: String, total: Int, available: Int, qty: Int): java.util.UUID {
-        items.save(InventoryItem(productId = product, totalSeats = total, available = available))
-        val past = Instant.now().minusSeconds(120)
-        return reservations.save(
-            Reservation(orderId = "o-$product", productId = product, qty = qty, status = ReservationStatus.RESERVED, createdAt = past, expiresAt = past),
-        ).id
-    }
-
-    // Verifies MAJOR-1 (oversell guard): N concurrent expiry sweeps on the SAME overdue hold restock it EXACTLY ONCE.
-    // The restock is an additive UPDATE; without the @Version on Reservation each racing sweep would restock again
-    // (phantom availability -> oversell). With @Version only one sweep commits; the losers fail the optimistic lock
-    // (rollback BEFORE their restock) and self-heal next pass.
-    @Test
-    fun `concurrent expiry sweeps restock an overdue hold exactly once`() {
-        val id = seedExpiredHold("HOLD-A", total = 10, available = 9, qty = 1) // 1 seat currently held
-        val start = CountDownLatch(1)
-
-        val futures = (1..8).map {
-            pool.submit(
-                Callable {
-                    start.await()
-                    runCatching { service.expireOverdue(Instant.now()) }
-                },
-            )
-        }
-        start.countDown()
-        futures.forEach { it.get() }
-
-        assertEquals(10, items.findById("HOLD-A").orElseThrow().available, "the hold is restocked exactly once, never twice (no oversell)")
-        assertEquals(ReservationStatus.EXPIRED, reservations.findById(id).orElseThrow().status)
-    }
-
-    // Verifies MAJOR-1: a late confirm racing the reconciler sweep on the same overdue hold restocks at most once.
-    // Both see RESERVED+expired and would each restock; @Version lets only one terminal transition win.
-    @Test
-    fun `confirm racing the expiry sweep restocks at most once`() {
-        val id = seedExpiredHold("HOLD-B", total = 10, available = 9, qty = 1)
-        val start = CountDownLatch(1)
-
-        val confirmF = pool.submit(Callable { start.await(); runCatching { service.confirm("o-HOLD-B", "HOLD-B") } })
-        val sweepF = pool.submit(Callable { start.await(); runCatching { service.expireOverdue(Instant.now()) } })
-        start.countDown()
-        confirmF.get(); sweepF.get()
-
-        assertEquals(10, items.findById("HOLD-B").orElseThrow().available, "at most one restock for a single hold (no oversell)")
-        assertEquals(ReservationStatus.EXPIRED, reservations.findById(id).orElseThrow().status, "an expired hold cannot be confirmed")
     }
 }

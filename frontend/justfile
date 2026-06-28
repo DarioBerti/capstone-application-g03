@@ -1,0 +1,34 @@
+# EuroTransit debug frontend (React + Vite). Run from this folder: `just <recipe>`.
+# The browser hits this dev server only; Vite proxies /api/<svc> to the local JVMs
+# (catalog 8083, orders 8080, inventory 8081, payments 8082 — see vite.config.ts).
+# Requires: node + npm, just.
+
+# list recipes
+default:
+    @just --list
+
+# install dependencies (run once, or after package.json changes)
+install:
+    npm install
+
+# dev server with hot reload + proxy -> http://localhost:5173
+dev: _ensure-deps
+    npm run dev
+
+# type-check + production build into dist/
+build: _ensure-deps
+    npm run build
+
+# serve the production build locally to sanity-check it
+preview: build
+    npm run preview
+
+# remove build output + installed deps
+clean:
+    rm -rf node_modules dist
+
+# install deps only if node_modules is missing (used by dev/build)
+_ensure-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -d node_modules ] || npm install

@@ -7,7 +7,6 @@ import it.g03.inventory.repository.InventoryItemRepository
 import it.g03.inventory.service.InventoryService
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
-import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.web.bind.annotation.*
 import java.time.Instant
 
@@ -53,25 +52,12 @@ class InventoryController(
     // POST /api/inventory/reservations/{orderId}/{productId}/confirm -> confirms a held reservation (payment authorized)
     @PostMapping("/reservations/{orderId}/{productId}/confirm")
     fun confirm(@PathVariable orderId: String, @PathVariable productId: String): ReservationResponse =
-        terminalReadOnLockLoss(orderId, productId) { service.confirm(orderId, productId) }
+        service.confirm(orderId, productId).toResponse()
 
     // POST /api/inventory/reservations/{orderId}/{productId}/release -> releases a held reservation and restocks (saga compensation)
     @PostMapping("/reservations/{orderId}/{productId}/release")
     fun release(@PathVariable orderId: String, @PathVariable productId: String): ReservationResponse =
-        terminalReadOnLockLoss(orderId, productId) { service.release(orderId, productId) }
-
-    /**
-     * Runs an idempotent terminal transition (confirm/release) and, if it LOSES the optimistic-lock race to a
-     * concurrent driver (the reconciler expired the same hold first, @Version on Reservation), re-reads and returns the
-     * now-terminal state as a clean 200 instead of a spurious 5xx. The re-read is idempotent (the row is already
-     * terminal), so the caller (Orders) sees the real outcome — e.g. EXPIRED -> it compensates — without a retry round-trip
-     */
-    private inline fun terminalReadOnLockLoss(orderId: String, productId: String, op: () -> Reservation): ReservationResponse =
-        try {
-            op().toResponse()
-        } catch (e: ObjectOptimisticLockingFailureException) {
-            service.find(orderId, productId).toResponse()
-        }
+        service.release(orderId, productId).toResponse()
 
     /** Availability snapshot: also used to verify the "never oversell" invariant in chaos runs */
     // GET /api/inventory/items/{productId} -> looks up a single inventory item by its product id

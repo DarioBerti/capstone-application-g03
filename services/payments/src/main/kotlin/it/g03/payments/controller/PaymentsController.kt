@@ -47,14 +47,6 @@ class PaymentsController(private val service: PaymentsService) {
     fun byOrder(@PathVariable orderId: String): AuthorizationResponse =
         service.find(orderId).toResponse()
 
-    // POST /api/payments/authorizations/{orderId}/void -> reverses (voids) the charge for an order; idempotent (Fase 2 #4).
-    // A missing authorization surfaces as 404 via the NoSuchElementException handler below (defensive: the saga only voids after a 200 AUTHORIZED)
-    @PostMapping("/authorizations/{orderId}/void")
-    fun void(@PathVariable orderId: String): AuthorizationResponse {
-        val outcome = service.void(orderId)
-        return outcome.authorization.toResponse(replayed = outcome.replayed)
-    }
-
     // Converts a missing authorization into a 404 response with a small JSON error body
     @ExceptionHandler(NoSuchElementException::class)
     fun notFound(e: NoSuchElementException): ResponseEntity<Map<String, String?>> =
