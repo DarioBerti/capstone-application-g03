@@ -15,3 +15,12 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
+# Structured JSON logging (Pillar D, §7.5): in-cluster the console emits ECS JSON so the platform's log
+# pipeline parses fields, and micrometer-tracing's traceId/spanId (already in MDC) surface as
+# trace.id/span.id — the log<->trace correlation that answers "why" on the money path. Local dev (base
+# profile, no postgres) keeps the human-readable console.
+logging:
+  structured:
+    format:
+      console: ecs

@@ -1,5 +1,13 @@
 # Fase 2 — Resilienza applicativa: piano tecnico dettagliato (Pilastro C)
 
+> ## ✅ FASE 2 CONCLUSA (2026-06-28)
+> Tutti i punti in-scope completati e verificati: **#1–#5** (codice + 62 test verdi sui 5 servizi),
+> **#6** validato **live** sul cluster `lab_g03_cluster` (probe/PDB/HPA/graceful-shutdown/degradation —
+> vedi §6), **#7-codice** (7.1 coerenza metriche, 7.3 guard low-cardinality, 7.5 structured logging
+> ECS con trace correlation; 2 nuovi test orders). **Fuori scope (→ Fase 4):** §7.2 dashboard RED e
+> §7.4 alert burn-rate (richiedono lo stack osservabilità). **Finding aperto:** §6.3 topology spread
+> soft (`ScheduleAnyway`) — scelta team da rivedere. Cluster **fermato** a fine validazione (`az aks stop`).
+
 > Documento di lavoro del team. Spezza **ogni** punto della Fase 2 in sotto-task azionabili, ognuno
 > ancorato alla **teoria del prof** (slide), alle **best practice del corso** (slide + lab) e ai
 > **pattern di codice già presenti** da riusare (file:line). Generato il 2026-06-25.
@@ -278,9 +286,21 @@ Obiettivo del prof: **provare il comportamento**, non l'esistenza dei bean. Ogni
 
 ---
 
-## 6. Validazione Kubernetes + graceful degradation
+## 6. Validazione Kubernetes + graceful degradation — ✅ VALIDATO LIVE (2026-06-28)
 
-Nota: **questi artefatti sono GIÀ scritti nel chart** (Fase 0/1). Qui si **valida** che funzionino col codice. La prova *live* richiede il cluster → **dipende dalla Fase 3** (non eseguibile in locale, ma le scelte si possono rivedere ora).
+Nota: **questi artefatti sono GIÀ scritti nel chart** (Fase 0/1) e il **codice prerequisito esiste già** (es. §6.5: entrambi i `destroy()` cooperativi sono in sorgente). Qui si **valida** che funzionino col codice. Nessuna modifica di codice in §6.
+
+**Esiti validazione live** (cluster `lab_g03_cluster`, AKS 3× nodi, 2026-06-28):
+- **6.1 ✅** — `curl /actuator/health/readiness` = `{db, readinessState}` status UP, **niente kafka**; `/liveness` = solo `{status:UP}`. Endpoint separati.
+- **6.2 ✅** — `kubectl drain` del nodo `…00000c`: le app eurotransit evictate **una alla volta** rispettando il PDB, `get deploy` resta 2/2 (money-path mai a 0); osservati i rifiuti `Cannot evict pod as it would violate the pod's disruption budget` su Kafka/coredns/metrics-server. CNPG `orders-db` ha fatto **failover pulito** (primary → `orders-db-2`), ArgoCD tornato Synced&Healthy dopo `uncordon`.
+- **6.3 ⚠️ FINDING** — `topologySpreadConstraints` presente (maxSkew 1, `kubernetes.io/hostname`) ma `whenUnsatisfiable: ScheduleAnyway` (soft): live **entrambe le repliche payments su `…00000d`**. Lo spread è preferenza, non garanzia → un guasto di quel nodo perde tutte le payments. Vedi nota sotto.
+- **6.4 ✅** — `kubectl get hpa` = **solo** `catalog` e `orders` (cpu vs 70%, min2/max4); inventory/payments **senza** HPA. Scale-up live non eseguito (costo AKS); la scelta di design è ciò che conta.
+- **6.5 ✅** — kill di una replica `orders` sotto traffico money-path: **45/45 richieste `202`**, zero 5xx (nessuna richiesta in volo persa, deploy resta 2/2). Log del pod morente: `Commencing graceful shutdown` → `cancelling outbox relay (cooperative shutdown)` → `cancelling order recovery sweep (cooperative shutdown)`.
+- **6.6 ✅** — `notifications` scalato a `0/0` → checkout `POST /api/orders` = `PENDING → CONFIRMED` in ~4s. Checkout completa con Notifications interamente giù.
+
+> **Finding 6.3 (scelta team da rivedere):** passare a `whenUnsatisfiable: DoNotSchedule` garantirebbe repliche su nodi distinti, ma su 3 nodi rischia pod non-schedulabili durante un drain. Trade-off availability vs hard-spread: decisione del team (annotare in `docs/design.md`).
+>
+> **Nota §7.5 live:** i pod in cluster girano l'immagine di Fase 3 (`3af035e`), **precedente** allo structured logging → i log live sono in formato plain. Il JSON ECS comparirà dopo un rebuild CI con la nuova config `application-postgres.yml`. La prova del meccanismo è nel test `OrdersStructuredLoggingTest` (verde in locale).
 
 **6.1 — Probe deliberate**
 - Cosa: verificare readiness = `readinessState + db` (Kafka **escluso**); liveness = solo stato processo; startup grace per il boot JVM.
@@ -309,8 +329,8 @@ Nota: **questi artefatti sono GIÀ scritti nel chart** (Fase 0/1). Qui si **vali
 **6.5 — Graceful shutdown (SIGTERM / preStop drain)**
 - Cosa: validare `terminationGracePeriodSeconds: 30` + `preStop sleep 5`; le coroutine si cancellano cooperativamente.
 - 📘 Sequenza shutdown: SIGTERM → readiness false → grace → terminate; la cancellazione propaga ai figli (deck 06, slide 96-99). *"Cancellation is not an error: it is a normal operational signal."*
-- 🔁 Drain già nel chart; `ReservationReconciler.destroy()`/futuro `OrderRecoverySweeper.destroy()` cancellano lo scope.
-- ☑️ Allo scale-down nessuna richiesta in volo persa, nessun task orfano.
+- 🔁 Drain già nel chart; il codice è **già completo**: `ReservationReconciler.destroy()` (`ReservationReconciler.kt:63`) **e** `OrderRecoverySweeper.destroy()` (`OrderRecoverySweeper.kt:140`) — più `OutboxPublisher.destroy()` — fanno `scope.cancel()` cooperativo (la dicitura "futuro" era stale).
+- ☑️ Allo scale-down nessuna richiesta in volo persa, nessun task orfano. **Evidenza già visibile:** col structured logging attivo, `kubectl logs` del pod terminato mostra `cancelling order recovery sweep (cooperative shutdown)` in JSON ECS.
 
 **6.6 — Degradazione: Notifications giù → checkout OK**
 - Cosa: validare che con Notifications spenta il checkout completi comunque.
@@ -324,32 +344,33 @@ Nota: **questi artefatti sono GIÀ scritti nel chart** (Fase 0/1). Qui si **vali
 
 Principio: *"You cannot make a system resilient without knowing it is failing"* (slide 40). **Ogni** policy di Fase 2 emette un segnale.
 
-**7.1 — Una metrica per ogni policy**
-- Cosa: esporre su `/actuator/prometheus`: `resilience4j_circuitbreaker_state{name="payments"}` e `_calls`, `resilience4j_retry_calls`, `resilience4j_bulkhead_available_concurrent_calls`, `orders_intake_shed_total`, `orders_compensations_total{type="refund"}`, `orders_payments_unavailable_total`.
-- 🔁 `resilience4j-micrometer` già a classpath (`build.gradle.kts:48`) → i meter del breaker si registrano da soli. I counter custom seguono `meterRegistry.counter(...)` (mirror `OrderService.kt:41`, `InventoryService` outcomes).
+**7.1 — Una metrica per ogni policy** — ✅ FATTO
+- Cosa: esporre su `/actuator/prometheus`: `resilience4j_circuitbreaker_state{name="payments"}` e `_calls`, `resilience4j_retry_calls`, `resilience4j_bulkhead_available_concurrent_calls`, `orders_intake_shed_total`, `orders_compensations_total{type="refund"}`, `orders_payment_failures_total{outcome="unavailable"}`.
+- 🔁 `resilience4j-micrometer` già a classpath (`build.gradle.kts:48`) → i meter del breaker si registrano da soli. I counter custom seguono `meterRegistry.counter(...)`: `orders_placed_total` (`OrderService.kt:45`), `orders_compensations_total{type}` (`OrderSaga.kt:36`/`OrderRecoverySweeper.kt:66`), `orders_recovery_total{outcome}` (`OrderRecoverySweeper.kt:63`), `orders_intake_shed_total` (`OrdersIntakeRateLimiter.kt:25`), `orders_payment_failures_total{outcome}` (`Gateways.kt:118`), `payments_authorizations_total`/`payments_voids_total{outcome}`, `inventory_reservations_total{outcome}`.
 - ☑️ Ogni feature è visibile come serie temporale.
+- ⚠️ Nota coerenza (2026-06-28): il piano citava `orders_payments_unavailable_total`; il codice emette il più ricco `orders_payment_failures_total{outcome ∈ unavailable|client_error|bulkhead_full}` (`Gateways.kt:118`). Allineato il nome al codice (no rename: il counter è già usato dai test e l'outcome-tag copre i tre casi).
 
 **7.2 — RED sul money-path**
 - Cosa: Rate / Errors / Duration per il checkout (per servizio e per dipendenza).
 - 📘 RED misura la qualità lato utente (deck 10, slide 21); SLI emessi da Orders (solo lui vede la state machine — `docs/slo.md`).
 - ☑️ Dashboard (Fase 4) risponde a *"dove è andato il tempo / dove ha fallito?"*.
 
-**7.3 — Low cardinality**
-- Cosa: label ammesse = `outcome`, `reason`, `dependency`, `status`. **Vietate** `orderId`, `traceId`, `userId`.
+**7.3 — Low cardinality** — ✅ FATTO
+- Cosa: label ammesse = `outcome`, `reason`, `dependency`, `status` (+ `type`). **Vietate** `orderId`, `traceId`, `userId`.
 - 📘 *"High-cardinality labels destroy metrics systems"* (slide 15).
 - 🔁 Convenzione già usata: `..._total{outcome=...}` (Inventory/Payments).
-- ☑️ Nessuna label ad alta cardinalità.
+- ☑️ Nessuna label ad alta cardinalità. **Guard di regressione:** `MetricCardinalityGuardTest` (orders) asserisce che ogni meter custom porta solo tag-key ammesse e nessun tag-value UUID-shaped.
 
 **7.4 — Alert symptom-based / burn-rate**
 - Cosa: gli alert (Fase 4) si basano su burn-rate dell'SLO checkout, **mai** sulla CPU; lo stato del breaker è osservabile ma non necessariamente paging.
 - 📘 Buono: *"checkout SLO burn rate > 14× su 5m e 6× su 1h"*; cattivo: *"CPU > 80%"* (slide 20). Multi-window burn-rate già deciso in `docs/slo.md`.
 - ☑️ Definizioni di alert pronte per Fase 4, ancorate al sintomo.
 
-**7.5 — Metriche/log/trace = 3 domande**
+**7.5 — Metriche/log/trace = 3 domande** — ✅ FATTO (2026-06-28)
 - Cosa: metriche per alert/SLO; log strutturati (con traceId) per il "perché"; trace per "dove è il tempo".
 - 📘 Slide 9; tracing che attraversa Kafka via header (decisione design #8).
-- 🔁 OTLP già configurato (`application.yml:67-72`).
-- ☑️ Correlazione log-metric-trace possibile sul money-path.
+- 🔁 OTLP già configurato; **structured logging nativo Spring Boot 4** ora attivo: `logging.structured.format.console=ecs` nel profilo cluster (`application-postgres.yml` dei 4 servizi con DB; base `application.yml` per notifications che non ha profilo postgres). In cluster ogni servizio emette JSON ECS con `trace.id`/`span.id` presi dall'MDC di micrometer-tracing → correlazione log↔trace. Nessuna dipendenza nuova, nessun `logback-spring.xml`.
+- ☑️ Correlazione log-metric-trace possibile sul money-path. **Test:** `OrdersStructuredLoggingTest` prova che, dentro uno span attivo, la riga di log è JSON valido e contiene il trace id.
 
 ---
 
@@ -363,8 +384,8 @@ Mappa ai punti ☐ di `capstone-configuration-g03/docs/capstone-dod.md` (oggi tu
 | Bulkheads isolano i pool | #2.4 | test isolamento + metrica bulkhead |
 | Timeout + retry bounded con backoff **e jitter** | #2.1-2.2 | config R4j + test #5.3 |
 | Backpressure / load shedding (429) | #3 | 429 osservato + metrica #3.4 |
-| Graceful degradation (Notifications giù → checkout OK) | #6.6 | test/validazione |
-| Probe deliberate; PDB; topology spread; HPA | #6 | validazione live (Fase 3) |
+| Graceful degradation (Notifications giù → checkout OK) | #6.6 | ✅ validato live 2026-06-28 (notifications=0 → CONFIRMED) |
+| Probe deliberate; PDB; topology spread; HPA | #6 | ✅ validato live 2026-06-28 (drain/scale/curl; finding §6.3) |
 
 **Vincoli di consegna del corso** (Lab01-04, deck 02): `just verify` verde, `just test-all` verde, **CI verde**, immagini immutabili, **zero credenziali cluster in CI**, ogni scelta non ovvia annotata in `docs/` (è lì che si prende il voto). Aggiornare anche `docs/design.md` (decisione 7: policy CB/retry/bulkhead) e `docs/agent-log.md` se emerge un errore reale dell'agente durante l'implementazione.
 
