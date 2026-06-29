@@ -31,7 +31,7 @@ The **money path** (place order → reserve inventory → authorize payment → 
 services/<svc>/
   src/main/kotlin/it/g03/<svc>/
   src/main/resources/application.yml
-  src/main/resources/application-postgres.yml
+  src/main/resources/application-cluster.yml
 .github/workflows/ci.yml
 justfile
 ```
@@ -39,10 +39,10 @@ justfile
 ## Local development
 
 ```bash
-just run catalog          # run one service on :8080 with H2
+just run catalog          # run one service on :8080 (needs Postgres)
 just test orders          # run a service's tests
 just test-all             # all services
 just image inventory dev  # build a local image
 ```
 
-Each service runs standalone with H2 by default. The `postgres` profile (`SPRING_PROFILES_ACTIVE=postgres`) switches to PostgreSQL using `DB_*` env vars, which are injected in-cluster from the CloudNativePG-generated secret (see the configuration repo).
+Every service runs on PostgreSQL (no H2): the base profile uses the `DB_*` env vars with local-dev defaults. The `cluster` profile (`SPRING_PROFILES_ACTIVE=cluster`) layers on in-cluster hardening — quiet SQL, hidden actuator health details, and ECS JSON logs; in-cluster the `DB_*` values come from the CloudNativePG-generated secret (see the configuration repo).

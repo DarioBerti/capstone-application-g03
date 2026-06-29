@@ -1,4 +1,4 @@
-# Cluster overlay — activate with SPRING_PROFILES_ACTIVE=postgres.
+# Cluster overlay — activate with SPRING_PROFILES_ACTIVE=cluster.
 # The datasource, Flyway and schema config now live in the base application.yml (Postgres everywhere);
 # this profile only tightens things that should differ in a real cluster vs local dev.
 spring:
@@ -22,7 +22,7 @@ management:
 # Structured JSON logging (Pillar D, §7.5): in-cluster the console emits ECS JSON so the platform's log
 # pipeline parses fields, and micrometer-tracing's traceId/spanId (already in MDC) surface as
 # trace.id/span.id — the log<->trace correlation that answers "why" on the money path. Local dev (base
-# profile, no postgres) keeps the human-readable console.
+# profile, no cluster) keeps the human-readable console.
 logging:
   structured:
     format:

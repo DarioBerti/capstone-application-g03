@@ -43,7 +43,7 @@ dependencies {
 	implementation("io.micrometer:micrometer-tracing-bridge-otel")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 
-	// Schema migrations (postgres profile only): Flyway owns the schema, Hibernate validates. The starter
+	// Schema migrations (cluster profile only): Flyway owns the schema, Hibernate validates. The starter
 	// pulls in Flyway core AND Spring Boot 4's Flyway auto-configuration (module spring-boot-flyway) that
 	// actually runs migrations on startup — bare flyway-core does not auto-migrate under Boot 4's modules.
 	implementation("org.springframework.boot:spring-boot-starter-flyway")

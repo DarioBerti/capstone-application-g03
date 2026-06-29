@@ -66,7 +66,7 @@ services/<name>/          # one independent Gradle project per service
     controller/ service/ repository/ entities/ events/   # layer folders = package segments
   src/main/resources/
     application.yml               # base config
-    application-postgres.yml      # cluster profile = env-driven PostgreSQL
+    application-cluster.yml       # cluster overlay (quiet SQL, hidden health details, JSON logs)
     db/migration/V*__*.sql        # Flyway migrations (own schema per service)
   src/test/kotlin/it/g03/<name>/  # tests (Testcontainers PostgreSQL)
 justfile                  # task runner — primary entrypoint for all commands
@@ -258,7 +258,7 @@ There is no in-memory fallback. KIND runs on Docker; Testcontainers (tests) need
 `orders`, `inventory`, `payments` each get a **dedicated CloudNativePG cluster** (money-path /
 contended / financial → blast-radius isolation). `catalog` shares a lower-tier instance
 (read-mostly, tolerant of staleness). `notifications` has no database. Activate the cluster profile
-with `SPRING_PROFILES_ACTIVE=postgres`.
+with `SPRING_PROFILES_ACTIVE=cluster`.
 
 ### Secrets & migrations
 - Secrets live in Git **only as SealedSecrets** and reach the app as env vars — never in source or
@@ -272,11 +272,11 @@ SealedSecrets), not here. Injection uses plain environment variables — there i
 Config and **no** `@ConfigurationProperties` classes. Three mechanisms:
 
 1. **Explicit placeholders `${VAR:default}`** in `application*.yml`:
-   - DB (in `application-postgres.yml`): `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
+   - DB (in `application.yml`): `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
    - Kafka (orders/inventory/payments/notifications): `KAFKA_BOOTSTRAP`
    - Orders sync gateways: `INVENTORY_BASE_URL`, `PAYMENTS_BASE_URL`
 2. **Spring relaxed binding** (env var maps to a property, no placeholder needed):
-   `SPRING_PROFILES_ACTIVE=postgres`, `MANAGEMENT_OTLP_TRACING_ENDPOINT`.
+   `SPRING_PROFILES_ACTIVE=cluster`, `MANAGEMENT_OTLP_TRACING_ENDPOINT`.
 3. **App-level tunables via `@Value`** (overridable by env): `app.unit-price-cents`,
    `app.outbox.poll-interval`, `app.outbox.enabled`, `inventory.reservation.ttl`,
    `inventory.reservation.sweep-interval`, `payments.decline-threshold-cents`.

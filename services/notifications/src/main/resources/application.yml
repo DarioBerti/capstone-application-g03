@@ -51,13 +51,3 @@ management:
     tracing:
       # local default collector endpoint; overridden in cluster deployment
       endpoint: http://localhost:4318/v1/traces
-
-# Structured JSON logging (Pillar D, §7.5). Notifications has NO `postgres` profile (stateless, no DB →
-# the chart never sets SPRING_PROFILES_ACTIVE for it, see deployments.yaml), so unlike the other four
-# services the ECS console format is enabled here in the base config. In-cluster this yields JSON logs
-# with trace.id/span.id (micrometer-tracing MDC) like the rest; locally the extra structure is harmless
-# for a stateless edge consumer.
-logging:
-  structured:
-    format:
-      console: ecs
