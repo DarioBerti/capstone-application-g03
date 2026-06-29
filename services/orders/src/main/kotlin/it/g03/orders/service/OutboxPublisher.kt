@@ -36,7 +36,9 @@ class OutboxPublisher(
     @Value("\${app.outbox.enabled}") private val enabled: Boolean,
 ) : DisposableBean {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Dispatchers.IO: each drain does BLOCKING work (JPA findTop50/save + the Kafka ack wait .get(5s)), which belongs on
+    // the elastic IO pool, not the CPU-bound Default pool (deck 06 blocking-vs-suspending). Matches OrderRecoverySweeper
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Cold ticker Flow: emits Unit every [pollInterval] until the scope is cancelled
     private fun ticker(interval: Duration) = flow {

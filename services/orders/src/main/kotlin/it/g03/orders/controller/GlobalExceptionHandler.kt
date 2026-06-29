@@ -2,6 +2,7 @@ package it.g03.orders.controller
 
 import it.g03.orders.dto.ErrorResponse
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -33,4 +34,15 @@ class GlobalExceptionHandler {
     fun conflict(e: DataIntegrityViolationException): ResponseEntity<ErrorResponse> =
         ResponseEntity.status(HttpStatus.CONFLICT)
             .body(ErrorResponse("duplicate request in flight (idempotency key); retry to fetch the existing order"))
+
+    /**
+     * Load shedding (Pillar C, Fase 2 #3): the intake is over its rate budget → 429 Too Many Requests + the
+     * standard Retry-After header (seconds, derived from the limiter window). Controlled refusal, not a 5xx:
+     * the client is told to come back and the money path is protected.
+     */
+    @ExceptionHandler(IntakeOverloadedException::class)
+    fun overloaded(e: IntakeOverloadedException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, e.retryAfterSeconds.toString())
+            .body(ErrorResponse("orders intake overloaded, retry later"))
 }

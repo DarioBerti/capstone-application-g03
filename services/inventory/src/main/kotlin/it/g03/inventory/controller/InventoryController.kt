@@ -3,9 +3,11 @@ package it.g03.inventory.controller
 import it.g03.inventory.dto.ReservationResponse
 import it.g03.inventory.dto.ReserveRequest
 import it.g03.inventory.dto.toResponse
+import it.g03.inventory.entities.Reservation
 import it.g03.inventory.entities.TripSeats
 import it.g03.inventory.repository.TripSeatsRepository
 import it.g03.inventory.service.InventoryService
+import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.web.bind.annotation.*
 
 /**
@@ -30,12 +32,25 @@ class InventoryController(
     // POST /api/inventory/reservations/{orderId}/{tripCode}/confirm -> confirms a held reservation (payment authorized)
     @PostMapping("/reservations/{orderId}/{tripCode}/confirm")
     fun confirm(@PathVariable orderId: String, @PathVariable tripCode: String): ReservationResponse =
-        service.confirm(orderId, tripCode).toResponse()
+        terminalReadOnLockLoss(orderId, tripCode) { service.confirm(orderId, tripCode) }
 
     // POST /api/inventory/reservations/{orderId}/{tripCode}/release -> releases a held reservation and restocks (saga compensation)
     @PostMapping("/reservations/{orderId}/{tripCode}/release")
     fun release(@PathVariable orderId: String, @PathVariable tripCode: String): ReservationResponse =
-        service.release(orderId, tripCode).toResponse()
+        terminalReadOnLockLoss(orderId, tripCode) { service.release(orderId, tripCode) }
+
+    /**
+     * Runs an idempotent terminal transition (confirm/release) and, if it LOSES the optimistic-lock race to a
+     * concurrent driver (the reconciler expired the same hold first, @Version on Reservation), re-reads and returns the
+     * now-terminal state as a clean 200 instead of a spurious 5xx. The re-read is idempotent (the row is already
+     * terminal), so the caller (Orders) sees the real outcome — e.g. EXPIRED -> it compensates — without a retry round-trip
+     */
+    private inline fun terminalReadOnLockLoss(orderId: String, tripCode: String, op: () -> Reservation): ReservationResponse =
+        try {
+            op().toResponse()
+        } catch (e: ObjectOptimisticLockingFailureException) {
+            service.find(orderId, tripCode).toResponse()
+        }
 
     /** Availability snapshot: also used to verify the "never oversell" invariant in chaos runs */
     // GET /api/inventory/items/{tripCode} -> looks up a single trip's seat counts by its trip code

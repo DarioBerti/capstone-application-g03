@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.Table
 import jakarta.persistence.UniqueConstraint
+import jakarta.persistence.Version
 import java.time.Instant
 import java.util.UUID
 
@@ -59,6 +60,16 @@ class Reservation(
 
     @Column(name = "released_at")  // set on RESERVED -> RELEASED/EXPIRED (seats restocked)
     var releasedAt: Instant? = null,
+
+    // Optimistic-lock guard (Pillar B): the terminal transitions RESERVED→{CONFIRMED,RELEASED,EXPIRED} each do a
+    // read-then-(status-flip + ADDITIVE restock). Two drivers can race the SAME reservation — a late confirm vs the
+    // reconciler, or two reconcilers (inventory runs >1 replica). Without this, both pass the status guard and BOTH
+    // restock (additive, non-convergent) → phantom availability → oversell. @Version makes the loser fail at flush
+    // (ObjectOptimisticLockingFailureException → rollback) BEFORE its restock runs (restock is @Modifying
+    // flushAutomatically, so the versioned UPDATE flushes first). JPA manages the column; never set it by hand.
+    @Version
+    @Column(nullable = false)
+    var version: Long = 0,
 )
 
 // The reservation lifecycle states (see the state machine in the class doc above)

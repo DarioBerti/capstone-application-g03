@@ -1,6 +1,7 @@
 package it.g03.orders.repository
 
 import it.g03.orders.entities.Order
+import it.g03.orders.entities.OrderStatus
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
@@ -14,4 +15,7 @@ interface OrderRepository : JpaRepository<Order, UUID> {
 
     /** "My orders": paginated history scoped to the authenticated buyer (indexed on buyer_sub). */
     fun findByBuyerSub(buyerSub: String, pageable: Pageable): Page<Order>
+
+    /** Recovery sweep ([OrderRecoverySweeper]): the orders parked in PAYMENT_PENDING by the circuit-breaker fallback, retried once Payments is reachable again. */
+    fun findByStatus(status: OrderStatus): List<Order>
 }

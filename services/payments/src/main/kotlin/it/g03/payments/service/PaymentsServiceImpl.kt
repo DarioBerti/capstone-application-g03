@@ -34,9 +34,14 @@ class PaymentsServiceImpl(
 ) : PaymentsService {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // Helper to increment the per-outcome counter (authorized/declined/replayed/voided) for observability
+    // Helper to increment the per-outcome counter (authorized/declined/replayed) for observability
     private fun outcomes(outcome: String) =
         meterRegistry.counter("payments_authorizations_total", "outcome", outcome)
+
+    // Void (reversal) gets its OWN metric name so the authorize RED series stays clean
+    // (one-name-per-concern): outcome = voided | replayed | noop_declined
+    private fun voidOutcomes(outcome: String) =
+        meterRegistry.counter("payments_voids_total", "outcome", outcome)
 
     /**
      * STRICT idempotency ("must not double-charge", Pillar B) -> same pattern as Inventory.reserve:
@@ -83,25 +88,36 @@ class PaymentsServiceImpl(
     }
 
     /**
-     * Compensating action (Pillar B / audit C2): void a previously AUTHORIZED charge so a rejected order
-     * never keeps the customer's money. Idempotent and keyed by orderId — voiding an already-VOIDED record
-     * (or a DECLINED one, where nothing was charged) replays the stored outcome.
+     * VOID (reversal) of a previously AUTHORIZED charge — the saga compensation for a hold that expired
+     * AFTER authorize (Pillar B/C, Fase 2 #4). Idempotent, keyed by orderId (read-modify-write in one
+     * transaction): a missing row is a domain not-found (404, defensive — the saga only voids after a 200
+     * AUTHORIZED); an already-VOIDED row replays (no second reversal); a DECLINED row is a no-op (nothing
+     * was ever charged). No PSP call, no event — the saga decision travels in the synchronous response.
      */
     @Transactional
-    override fun void(orderId: String): AuthorizeOutcome {
+    override fun void(orderId: String): VoidOutcome {
         val auth = authorizations.findByOrderId(orderId)
             ?: throw NoSuchElementException("no authorization for order=$orderId")
-        if (auth.status == AuthorizationStatus.AUTHORIZED) {
-            auth.status = AuthorizationStatus.VOIDED
-            auth.voidedAt = Instant.now()
-            authorizations.save(auth)
-            outcomes("voided").increment()
-            log.info("voided authorization for order={}", orderId)
-            return AuthorizeOutcome(auth, replayed = false)
+        return when (auth.status) {
+            AuthorizationStatus.VOIDED -> {
+                voidOutcomes("replayed").increment()
+                log.info("void replay for order={} -> already VOIDED", orderId)
+                VoidOutcome(auth, replayed = true)
+            }
+            AuthorizationStatus.AUTHORIZED -> {
+                auth.status = AuthorizationStatus.VOIDED
+                auth.voidedAt = Instant.now()
+                val voided = authorizations.save(auth)
+                voidOutcomes("voided").increment()
+                log.info("void order={} -> AUTHORIZED reversed to VOIDED", orderId)
+                VoidOutcome(voided, replayed = false)
+            }
+            AuthorizationStatus.DECLINED -> {
+                voidOutcomes("noop_declined").increment()
+                log.info("void order={} -> no-op (authorization was DECLINED, no charge)", orderId)
+                VoidOutcome(auth, replayed = true)
+            }
         }
-        // already VOIDED (idempotent replay) or DECLINED (nothing to void) -> return the stored outcome
-        log.info("void no-op for order={} (status={})", orderId, auth.status)
-        return AuthorizeOutcome(auth, replayed = true)
     }
 
     // Looks up the single authorization for an order, or raises a domain not-found error

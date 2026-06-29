@@ -5,6 +5,7 @@ import it.g03.orders.events.EventPublisher
 import it.g03.orders.repository.OutboxEventRepository
 import it.g03.orders.service.OutboxPublisher
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -24,9 +25,11 @@ import kotlin.test.assertNull
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
         "app.outbox.enabled=false",
+        "app.recovery.enabled=false",
     ],
 )
 @Import(TestcontainersConfiguration::class)
+@Tag("chaos-04") // anticipates chaos #4 (kafka-partition): the outbox re-drains in order on heal, nothing lost/duplicated
 class OutboxPublisherTest {
 
     class RecordingPublisher : EventPublisher {

@@ -47,6 +47,18 @@ class OrderStateMachine(
         }
     }
 
+    // RESERVED -> PAYMENT_PENDING transition (Pillar C): the circuit-breaker fallback PARKS the order when Payments is unavailable, instead of rejecting a customer whose card may be fine. Idempotent (only fires from RESERVED, so a re-park is a no-op). No outbox event: PAYMENT_PENDING is a transient internal state, not a customer-facing milestone; the seats stay held until a later retry authorizes or Inventory's TTL reconciler restocks them
+    @Transactional // transition commits atomically; the @Version check aborts a concurrent terminal transition instead of duplicating events
+    fun markPaymentPending(orderId: UUID) {
+        val order = load(orderId)
+        if (order.status == OrderStatus.RESERVED) {
+            order.status = OrderStatus.PAYMENT_PENDING
+            order.updatedAt = Instant.now()
+            orders.save(order)
+            log.info("order {} parked PAYMENT_PENDING (payments unavailable — will retry)", orderId)
+        }
+    }
+
     // Terminal happy end: emits order-confirmed + the confirmation notification
     @Transactional // transition + both outbox events commit atomically in one transaction
     fun confirm(orderId: UUID) {

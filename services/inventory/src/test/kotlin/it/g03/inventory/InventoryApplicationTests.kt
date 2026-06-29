@@ -5,7 +5,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 
 // Minimal smoke test to verify the Spring context starts (against Testcontainers PostgreSQL, real Flyway).
-@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false"])
+@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false", "inventory.reservation.enabled=false"])
 @Import(TestcontainersConfiguration::class)
 class InventoryApplicationTests {
 

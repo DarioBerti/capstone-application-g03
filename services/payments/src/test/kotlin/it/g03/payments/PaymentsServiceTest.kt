@@ -5,6 +5,7 @@ import it.g03.payments.repository.PaymentAuthorizationRepository
 import it.g03.payments.service.PaymentsService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -26,6 +27,7 @@ import kotlin.test.assertTrue
     ],
 )
 @Import(TestcontainersConfiguration::class)
+@Tag("chaos-02") // anticipates chaos #2 (inventory-podkill / redelivery): a retried/duplicated authorize charges once; void idempotent
 class PaymentsServiceTest {
 
     // Injects the service under test
@@ -128,5 +130,50 @@ class PaymentsServiceTest {
     @Test
     fun `non-positive amounts are rejected`() {
         assertFailsWith<IllegalArgumentException> { service.authorize("order-x", 0) }
+    }
+
+    // --- void / reversal (Fase 2 #4) -----------------------------------------------------------------------------
+
+    // Verifies the compensation: voiding an AUTHORIZED charge reverses it to VOIDED on the SAME row (no second row)
+    @Test
+    fun `void reverses an AUTHORIZED charge to VOIDED on the same row`() {
+        val authorized = service.authorize("order-1", 5_000)
+
+        val outcome = service.void("order-1")
+
+        assertEquals(AuthorizationStatus.VOIDED, outcome.authorization.status)
+        assertEquals(authorized.authorization.id, outcome.authorization.id, "void mutates the existing aggregate")
+        assertEquals(1, repository.count(), "void must NOT create a second row")
+        assertEquals(AuthorizationStatus.VOIDED, repository.findByOrderId("order-1")!!.status)
+    }
+
+    // Verifies idempotency (no double-storno): a retried void is a replay, the charge is reversed exactly once
+    @Test
+    fun `retried void is an idempotent replay - never a second reversal`() {
+        service.authorize("order-1", 5_000)
+        val first = service.void("order-1")
+        val replay = service.void("order-1")
+
+        assertEquals(false, first.replayed)
+        assertTrue(replay.replayed, "the second void must be a no-op replay")
+        assertEquals(AuthorizationStatus.VOIDED, replay.authorization.status)
+        assertEquals(1, repository.count())
+    }
+
+    // Verifies the no-op branch: voiding a DECLINED authorization changes nothing (nothing was ever charged)
+    @Test
+    fun `void of a DECLINED authorization is a no-op`() {
+        service.authorize("order-big", 100_000)
+
+        val outcome = service.void("order-big")
+
+        assertTrue(outcome.replayed)
+        assertEquals(AuthorizationStatus.DECLINED, outcome.authorization.status, "a declined authorization stays DECLINED")
+    }
+
+    // Verifies the defensive not-found path: voiding an order with no authorization is a domain not-found (-> 404)
+    @Test
+    fun `void of an unknown order raises not-found`() {
+        assertFailsWith<NoSuchElementException> { service.void("order-unknown") }
     }
 }

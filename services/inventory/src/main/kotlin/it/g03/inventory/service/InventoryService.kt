@@ -15,4 +15,5 @@ interface InventoryService {
     fun confirm(orderId: String, tripCode: String): Reservation
     fun release(orderId: String, tripCode: String): Reservation
     fun expireOverdue(now: Instant): Int
+    fun find(orderId: String, tripCode: String): Reservation
 }

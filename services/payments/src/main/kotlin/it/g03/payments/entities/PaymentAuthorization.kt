@@ -67,6 +67,10 @@ enum class AuthorizationStatus {
     /** Terminal: PSP declined -> a BUSINESS outcome (a valid value), not a transport failure */
     DECLINED,
 
-    /** Terminal: a previously AUTHORIZED charge was voided/refunded (saga compensation, audit C2) */
+    /**
+     * Terminal: a previously AUTHORIZED charge was reversed (void) — the saga compensation when the inventory hold
+     * expired AFTER authorize (Pillar B/C, Fase 2 #4). Reached only from AUTHORIZED; re-voiding a VOIDED row is an
+     * idempotent replay. Fits the existing status VARCHAR(16) with no CHECK, so it needs no migration
+     */
     VOIDED,
 }

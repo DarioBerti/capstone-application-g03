@@ -153,6 +153,12 @@ class InventoryServiceImpl(
         return overdue.size
     }
 
+    // Re-read the (now-terminal) reservation after the controller lost an optimistic-lock race to the reconciler.
+    @Transactional(readOnly = true)
+    override fun find(orderId: String, tripCode: String): Reservation =
+        reservations.findByOrderIdAndTripCode(orderId, tripCode)
+            ?: throw NoSuchElementException("no reservation for order=$orderId trip=$tripCode")
+
     // Convenience wrapper: emit the inventory-released event for a reservation (released | expired)
     private fun publishReleasedAfterCommit(r: Reservation, reason: String) =
         publishAfterCommit(

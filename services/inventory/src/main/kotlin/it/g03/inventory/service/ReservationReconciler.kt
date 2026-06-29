@@ -28,13 +28,22 @@ import java.time.Instant
 class ReservationReconciler(
     private val service: InventoryService,
     @Value("\${inventory.reservation.sweep-interval}") private val sweepInterval: Duration,
+    // Property-gate (mirror of OrderRecoverySweeper.enabled / OutboxPublisher.enabled): lets @SpringBootTest turn the
+    // background sweep OFF so it never races the assertions (Fase 2 #5.5). Default true in production
+    @Value("\${inventory.reservation.enabled:true}") private val enabled: Boolean,
 ) : DisposableBean {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Dispatchers.IO: the sweep does BLOCKING work (JPA via the @Transactional service), which belongs on the elastic
+    // IO pool, not the CPU-bound Default pool (deck 06 blocking-vs-suspending). Matches OrderRecoverySweeper (orders)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // starts the sweep loop once the app context is fully up (not before beans are ready)
+    // starts the sweep loop once the app context is fully up (not before beans are ready); skipped entirely when disabled
     @EventListener(ApplicationReadyEvent::class)
     fun start() {
+        if (!enabled) {
+            log.info("reservation reconciler disabled (inventory.reservation.enabled=false)")
+            return
+        }
         scope.launch {
             log.info("reservation reconciler started (sweep every {})", sweepInterval)
             while (isActive) {
