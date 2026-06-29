@@ -57,7 +57,6 @@ dependencies {
 	runtimeOnly("org.flywaydb:flyway-database-postgresql")
 
 	runtimeOnly("org.postgresql:postgresql")
-	runtimeOnly("com.h2database:h2")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
@@ -65,6 +64,12 @@ dependencies {
 	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// Tests run against a real PostgreSQL via Testcontainers (no H2) — versions from the Spring Boot BOM.
+	// The "must not double-charge" UNIQUE(order_id) race is materially more faithful on real Postgres than H2.
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:testcontainers-postgresql")
+	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
 }
 
 kotlin {

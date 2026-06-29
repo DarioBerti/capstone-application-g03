@@ -41,7 +41,15 @@ class NotificationsListener(private val objectMapper: ObjectMapper) {
     @KafkaListener(topics = ["notification-requested"], autoStartup = "\${app.kafka-listeners-enabled:true}") // subscribes to the notification-requested topic; autoStartup can be disabled in tests
 
     fun onNotificationRequested(payload: String) {
-        val n = objectMapper.readValue(payload, NotificationRequested::class.java)
+        val n = try {
+            objectMapper.readValue(payload, NotificationRequested::class.java)
+        } catch (e: Exception) {
+            // A malformed/poison payload must NOT throw out of the listener: that would fail the commit, stall
+            // the partition on redelivery, and contradict "failure stays local / graceful degradation". Log and
+            // skip — losing an unparseable notification is acceptable by this service's contract.
+            log.warn("skipping unparseable notification-requested payload: {}", e.message)
+            return
+        }
         // the mock e-mail "send": observable in logs and via GET /api/notifications
         log.info("[MAIL to {}] order {}: {}", n.recipient, n.orderId, n.message)
         recent.addFirst(n)

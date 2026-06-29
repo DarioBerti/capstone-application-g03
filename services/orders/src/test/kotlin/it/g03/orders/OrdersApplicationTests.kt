@@ -5,9 +5,10 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.ApplicationContext
+import org.springframework.context.annotation.Import
 import kotlin.test.assertTrue
 
-// Minimal smoke test to verify if the Spring context fails to start
+// Minimal smoke test to verify the Spring context starts (against Testcontainers PostgreSQL, real Flyway).
 @SpringBootTest(
 	properties = [
 		"spring.kafka.bootstrap-servers=localhost:9092", // dummy broker address (no real connection is made)
@@ -16,6 +17,7 @@ import kotlin.test.assertTrue
 		"app.outbox.enabled=false",                       // no background relay racing the assertions
 	],
 )
+@Import(TestcontainersConfiguration::class)
 class OrdersApplicationTests {
 
 	// Injects the Spring context so the test can assert on the registered beans

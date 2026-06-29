@@ -8,13 +8,15 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 /**
- * Outbox relay semantics: at-least-once with ordering preserved. The publisher under test is constructed manually (ticker disabled) with a recording/failing fake, against the real repository
+ * Outbox relay semantics: at-least-once with ordering preserved. The publisher under test is constructed
+ * manually (ticker disabled) with a recording/failing fake, against the real repository (Testcontainers Postgres).
  */
 @SpringBootTest(
     properties = [
@@ -24,6 +26,7 @@ import kotlin.test.assertNull
         "app.outbox.enabled=false",
     ],
 )
+@Import(TestcontainersConfiguration::class)
 class OutboxPublisherTest {
 
     class RecordingPublisher : EventPublisher {

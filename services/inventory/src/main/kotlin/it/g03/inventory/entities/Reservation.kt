@@ -1,6 +1,12 @@
 package it.g03.inventory.entities
 
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
+import jakarta.persistence.Id
+import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import java.time.Instant
 import java.util.UUID
 
@@ -12,27 +18,28 @@ import java.util.UUID
  *                     → EXPIRED                       (TTL passed, swept by the reconciler)
  *   (new) → REJECTED                                  (sold out at reserve time)
  *
- * The UNIQUE(order_id, product_id) constraint ensures idempotency (prevents duplicates):
- * if the same order is placed twice, the second insert fails and rolls back the entire
- * transaction (including the seat decrement). Both the dedup check and seat reduction happen
- * atomically in the same transaction (see InventoryService.reserve)
+ * The UNIQUE(order_id, trip_code) constraint is the idempotency record of the money path: if the same order
+ * is placed twice, the second insert fails and rolls back the entire transaction (including the seat
+ * decrement). Both the dedup check and seat reduction happen atomically in the same transaction (see
+ * InventoryService.reserve).
+ *
+ * Plain `class`, not `data class` — a JPA-managed entity has identity, not value, semantics (root CLAUDE.md).
  */
-
-@Entity  // maps this class to a database table (JPA managed entity)
+@Entity
 @Table(
     name = "reservations",
-    // the UNIQUE(order_id, product_id) constraint is the idempotency record of the money path
-    uniqueConstraints = [UniqueConstraint(name = "uq_reservations_order_product", columnNames = ["order_id", "product_id"])],
+    // the UNIQUE(order_id, trip_code) constraint is the idempotency record of the money path
+    uniqueConstraints = [UniqueConstraint(name = "uq_reservations_order_trip", columnNames = ["order_id", "trip_code"])],
 )
-data class Reservation(
+class Reservation(
     @Id  // primary key (generated UUID, no shared sequence to contend on)
     val id: UUID = UUID.randomUUID(),
 
     @Column(name = "order_id", nullable = false, length = 64)  // the placing order
     val orderId: String = "",
 
-    @Column(name = "product_id", nullable = false, length = 64)  // the held product
-    val productId: String = "",
+    @Column(name = "trip_code", nullable = false, length = 64)  // the held trip (shared code vocabulary)
+    val tripCode: String = "",
 
     @Column(nullable = false)  // how many seats this hold reserves
     val qty: Int = 0,
@@ -46,6 +53,12 @@ data class Reservation(
 
     @Column(name = "expires_at", nullable = false)  // TTL deadline: after this the reconciler may sweep it
     val expiresAt: Instant = Instant.EPOCH,
+
+    @Column(name = "confirmed_at")  // set on RESERVED -> CONFIRMED
+    var confirmedAt: Instant? = null,
+
+    @Column(name = "released_at")  // set on RESERVED -> RELEASED/EXPIRED (seats restocked)
+    var releasedAt: Instant? = null,
 )
 
 // The reservation lifecycle states (see the state machine in the class doc above)

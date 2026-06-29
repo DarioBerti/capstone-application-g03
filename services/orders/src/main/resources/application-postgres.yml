@@ -1,17 +1,13 @@
+# Cluster overlay — activate with SPRING_PROFILES_ACTIVE=postgres.
+# The datasource, Flyway and schema config now live in the base application.yml (Postgres everywhere);
+# this profile only tightens things that should differ in a real cluster vs local dev.
 spring:
-  datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ordersdb}
-    username: ${DB_USER:orders}
-    password: ${DB_PASS:orders}
-    driver-class-name: org.postgresql.Driver
-  flyway:
-    enabled: true    # Flyway owns the schema in-cluster; Hibernate only validates (ddl-auto)
-  h2:
-    console:
-      enabled: false
   jpa:
-    hibernate:
-      ddl-auto: validate
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+    # don't log every statement in the cluster
+    show-sql: false
+
+management:
+  endpoint:
+    health:
+      # don't leak internal health details over the cluster probe endpoint
+      show-details: never

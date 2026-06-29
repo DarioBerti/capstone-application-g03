@@ -1,29 +1,31 @@
 spring:
   application:
-    # logical service name used in logs, metrics and discovery-related metadata
     name: payments
   datasource:
-    # local dev database: in-memory H2 so the service starts without external dependencies
-    url: jdbc:h2:mem:paymentsdb
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
+    # PostgreSQL everywhere (no H2). Values are env-driven with local-dev defaults; the cluster supplies
+    # them via the config repo (ConfigMap/SealedSecret). Payments has a DEDICATED money-path datasource; dev
+    # uses one shared `eurotransit` database with a schema per service — this service owns `payments`.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:eurotransit}
+    username: ${DB_USER:payments}
+    password: ${DB_PASS:payments}
+    driver-class-name: org.postgresql.Driver
   flyway:
-    # Local H2 development uses Hibernate ddl-auto; Flyway is reserved for the postgres profile
-    enabled: false   # local H2 dev: schema via ddl-auto; Flyway runs only on the postgres profile
-  h2:
-    console:
-      # useful for debugging local state
-      enabled: true
+    # Flyway owns the schema; it creates and migrates into the per-service `payments` schema
+    enabled: true
+    schemas: payments
+    default-schema: payments
   jpa:
     hibernate:
-      # let Hibernate create/update schema in local dev
-      ddl-auto: update
-    # print SQL to make persistence behavior easier to inspect locally
+      # Hibernate only validates the Flyway-owned schema; it never mutates it
+      ddl-auto: validate
+    # Don't hold the persistence context + DB connection open for the whole request (undermines the
+    # connection-pool bulkhead on the money path).
+    open-in-view: false
     show-sql: true
     properties:
       hibernate:
-        # format SQL so the output is easier to read in logs
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: payments
         format_sql: true
   kafka:
     # ${VAR:default} = env var if set (in-cluster), localhost fallback for local dev
@@ -56,6 +58,11 @@ app:
   oidc:
     # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
+
+# (mock) PSP decision rule: amounts at/above this threshold are DECLINED. Lets the demo exercise the saga
+# compensation path on demand (order a huge qty -> decline).
+payments:
+  decline-threshold-cents: ${PAYMENTS_DECLINE_THRESHOLD_CENTS:100000}
 
 # Observability (Pillar D): K8s probes, Prometheus scrape endpoint, OTel tracing
 # OTLP endpoint is a local default; in-cluster it is overridden via env (MANAGEMENT_OTLP_TRACING_ENDPOINT) to point at the collector / Tempo

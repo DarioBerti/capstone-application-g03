@@ -7,11 +7,14 @@
 ## What this service is
 
 The read-mostly product/offer catalog (train departures), exposed via the ingress under `/api/catalog`.
-It **owns** product identity, names, and pricing. It is **tolerant of staleness by contract** and sits
-**outside the money path** — browsing, not checkout. Package `it.g03.catalog`.
+It **owns** trip identity (a surrogate `id` UUID + a human-readable business `code`), the journey
+(origin/destination stations, departure/arrival times), and pricing. It is **tolerant of staleness by
+contract** and sits **outside the money path** — browsing, not checkout. Package `it.g03.catalog`.
 
-Catalog does **not** own seat counts; Inventory owns those for the same `productId`s. The two stores
-share only the `productId` vocabulary (database-per-service), never each other's tables.
+A trip `code` follows the transit-industry format `[CARRIER][SERVICE_NUMBER]-[YYYYMMDD]` (e.g.
+`FR9592-20260629`) and is the **cross-service vocabulary**. Catalog does **not** own seat counts;
+Inventory owns those for the same trip `code`s. The two stores share only the `code` vocabulary
+(database-per-service), never each other's tables.
 
 ## Invariants to protect
 
@@ -19,7 +22,7 @@ share only the `productId` vocabulary (database-per-service), never each other's
   synchronous or eventing dependency that puts Catalog on the place-order → reserve → authorize → confirm
   path.
 - **Ownership boundary.** Catalog reads/writes only its own schema. It must not read or write Inventory's
-  (or any other service's) tables — coordinate via the shared `productId` vocabulary only.
+  (or any other service's) tables — coordinate via the shared trip `code` vocabulary only.
 - **Price is non-negative.** Enforced at the database level; treat it as a hard invariant, not a code
   convenience.
 - **Staleness is acceptable, incorrectness is not.** It's fine for Catalog to serve slightly stale data;
@@ -50,7 +53,7 @@ share only the `productId` vocabulary (database-per-service), never each other's
 Organize by layer, **one repository per file**, keeping small cohesive types grouped:
 
 - `controller/` — REST controllers + the `GlobalExceptionHandler` (`@RestControllerAdvice`)
-- `dto/` — request/response DTOs, `ErrorResponse`, and the `Product.toResponse()` mapper
+- `dto/` — request/response DTOs, `ErrorResponse`, and the `Trip`/`Station` `toResponse()` mappers
 - `service/` — business/query logic
 - `repository/` — Spring Data repositories, **one repository per file** (never bundle several into a `Repositories.kt`)
 - `entities/` — JPA entities, one entity per file

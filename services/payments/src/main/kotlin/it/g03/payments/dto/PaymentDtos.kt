@@ -15,10 +15,13 @@ data class AuthorizationResponse(
     val authorizationId: UUID,
     val orderId: String,
     val amountCents: Long,
+    val currency: String,
     val status: AuthorizationStatus,
+    val pspReference: String?,
+    val declineReason: String?,
     // true when this call hit the idempotent replay path (retry/duplicate)
     val replayed: Boolean,
 )
 
 fun PaymentAuthorization.toResponse(replayed: Boolean = false) =
-    AuthorizationResponse(id, orderId, amountCents, status, replayed)
+    AuthorizationResponse(id, orderId, amountCents, currency, status, pspReference, declineReason, replayed)

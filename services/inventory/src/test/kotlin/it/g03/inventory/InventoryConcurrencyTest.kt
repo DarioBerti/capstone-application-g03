@@ -1,8 +1,8 @@
 package it.g03.inventory
 
-import it.g03.inventory.entities.InventoryItem
+import it.g03.inventory.entities.TripSeats
 import it.g03.inventory.entities.ReservationStatus
-import it.g03.inventory.repository.InventoryItemRepository
+import it.g03.inventory.repository.TripSeatsRepository
 import it.g03.inventory.repository.ReservationRepository
 import it.g03.inventory.service.InventoryService
 import org.junit.jupiter.api.AfterEach
@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -18,16 +19,19 @@ import kotlin.test.assertTrue
 
 /**
  * The "two customers must not buy the last seat" test (Pillar B, chaos #2 precondition).
- * N concurrent transactions race for 1 remaining seat: the atomic conditional UPDATE must let EXACTLY ONE win, regardless of interleaving. This is the in-process proof of the invariant; the chaos experiment later reproduces it under pod kill in the cluster
+ * N concurrent transactions race for 1 remaining seat: the atomic conditional UPDATE must let EXACTLY ONE win,
+ * regardless of interleaving. This is the in-process proof of the invariant; the chaos experiment later
+ * reproduces it under pod kill in the cluster. Runs on Testcontainers PostgreSQL — the race semantics that
+ * matter only hold on a real database.
  */
-
-@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false"])  // boot the full Spring app context to test the concurrent reserve wiring end-to-end
+@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false"])
+@Import(TestcontainersConfiguration::class)
 class InventoryConcurrencyTest {
 
     // Injects the service under test
     @Autowired lateinit var service: InventoryService
-    // Injects the inventory-item repository so the test can prepare and inspect seat counts directly
-    @Autowired lateinit var items: InventoryItemRepository
+    // Injects the trip-seats repository so the test can prepare and inspect seat counts directly
+    @Autowired lateinit var items: TripSeatsRepository
     // Injects the reservation repository so the test can prepare and clean the database state directly
     @Autowired lateinit var reservations: ReservationRepository
 
@@ -49,7 +53,7 @@ class InventoryConcurrencyTest {
     // Verifies the "two customers must not buy the last seat" invariant: with 8 threads racing for 1 seat, EXACTLY ONE wins and availability never goes negative
     @Test
     fun `only one of 8 concurrent customers gets the last seat`() {
-        items.save(InventoryItem(productId = "LAST-SEAT", totalSeats = 1, available = 1))
+        items.save(TripSeats(tripCode = "FR9999-20260629", totalSeats = 1, available = 1))
         val start = CountDownLatch(1)
 
         val futures = (1..8).map { i ->
@@ -57,7 +61,7 @@ class InventoryConcurrencyTest {
                 Callable {
                     start.await()
                     // each call runs in its own transaction (service proxy entry point)
-                    runCatching { service.reserve("order-$i", "LAST-SEAT", 1) }
+                    runCatching { service.reserve("order-$i", "FR9999-20260629", 1) }
                 },
             )
         }
@@ -70,9 +74,9 @@ class InventoryConcurrencyTest {
 
         assertEquals(1, winners, "exactly one customer may win the last seat")
         assertEquals(outcomes.size - 1, rejected, "everyone else must be told sold-out")
-        assertEquals(0, items.findById("LAST-SEAT").orElseThrow().available)
+        assertEquals(0, items.findById("FR9999-20260629").orElseThrow().available)
         assertTrue(
-            items.findById("LAST-SEAT").orElseThrow().available >= 0,
+            items.findById("FR9999-20260629").orElseThrow().available >= 0,
             "never oversell: availability can never go negative",
         )
     }
@@ -80,15 +84,15 @@ class InventoryConcurrencyTest {
     // Verifies that 8 concurrent duplicate deliveries of the SAME order decrement seats exactly once (idempotent under concurrency)
     @Test
     fun `concurrent duplicates of the SAME order decrement exactly once`() {
-        items.save(InventoryItem(productId = "DUP-SEAT", totalSeats = 5, available = 5))
+        items.save(TripSeats(tripCode = "FR9592-20260629", totalSeats = 5, available = 5))
         val start = CountDownLatch(1)
 
-        // 8 concurrent deliveries of the same logical operation (orderId, productId): the unique constraint + same-transaction decrement guarantee a single commit; losers throw (constraint) and at-least-once redelivery would replay them
+        // 8 concurrent deliveries of the same logical operation (orderId, tripCode): the unique constraint + same-transaction decrement guarantee a single commit; losers throw (constraint) and at-least-once redelivery would replay them
         val futures = (1..8).map {
             pool.submit(
                 Callable {
                     start.await()
-                    runCatching { service.reserve("order-dup", "DUP-SEAT", 1) }
+                    runCatching { service.reserve("order-dup", "FR9592-20260629", 1) }
                 },
             )
         }
@@ -97,7 +101,7 @@ class InventoryConcurrencyTest {
 
         val committed = results.mapNotNull { it.getOrNull() }
         assertTrue(committed.isNotEmpty(), "at least one delivery must commit")
-        assertEquals(4, items.findById("DUP-SEAT").orElseThrow().available, "one decrement only")
+        assertEquals(4, items.findById("FR9592-20260629").orElseThrow().available, "one decrement only")
         assertEquals(1, reservations.findAll().count { it.orderId == "order-dup" })
     }
 }

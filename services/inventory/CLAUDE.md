@@ -43,7 +43,7 @@ one last seat — can both buy it?* The answer must always be no.
 - Don't gate the reservation on an application-level read/check then write — that's the oversell bug.
 - Don't make seat correctness depend on an event being delivered.
 - Don't return raw entities or unbounded lists; don't let Hibernate own the schema (`validate` only).
-- Don't reach into other services' data — Inventory owns seat counts for the shared `productId`s only.
+- Don't reach into other services' data — Inventory owns seat counts for the shared trip `code`s only.
 - Don't treat a reserve/confirm/release as one-shot; assume retries and make each safe to repeat.
 
 ## Source layout
@@ -54,7 +54,7 @@ Organize by layer, **one repository per file**, keeping small cohesive types gro
 - `dto/` — request/response DTOs, `ErrorResponse`, and the `Reservation.toResponse()` mapper
 - `service/` — business logic (reservation logic, the overdue-hold reconciler)
 - `repository/` — Spring Data repositories, **one repository per file**
-- `entities/` — JPA entities (`InventoryItem`, `Reservation`), one per file
+- `entities/` — JPA entities (`TripSeats`, `Reservation`), one per file
 - `events/` — Kafka publishers and event payloads
 
 Name each file after the type it holds; keep `InventoryApplication.kt` at the package root.

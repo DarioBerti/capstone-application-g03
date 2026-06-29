@@ -10,16 +10,15 @@ import org.springframework.stereotype.Component
 import java.util.UUID
 
 /**
- * THE ORCHESTRATED SAGA (design decision #3): Orders is the coordinator; the stages are driven by Kafka (order-placed triggers this handler) but each decision is taken via a SYNCHRONOUS call ("a decision must be made now")!
+ * THE ORCHESTRATED SAGA (design decision #3): Orders is the coordinator; the stages are driven by Kafka (order-placed triggers this handler) but each decision is taken via a SYNCHRONOUS call ("a decision must be made now").
  *
  * Crash/redelivery semantics (at-least-once, chaos #2/#4):
  * - this method deliberately holds NO database transaction across remote calls; each transition commits separately via [OrderStateMachine]
  * - every downstream operation is idempotent (Inventory/Payments replay stored outcomes), so re-running the saga after a crash resumes from where it left off: PENDING → re-runs everything; RESERVED → skips reserve; terminal → no-op
  * - a TRANSPORT failure (timeout, 5xx) THROWS: the Kafka listener's default error handler retries with backoff, then logs & skips. A skipped order stays PENDING/RESERVED and is visible on dashboards
- * 
- * Phase 2 adds the circuit breaker + PAYMENT_PENDING fallback and a recovery sweep for stranded orders
+ *
+ * Phase 2 adds the circuit breaker + PAYMENT_PENDING fallback and a recovery sweep for stranded orders.
  */
-
 @Component // registers this class as a Spring-managed bean
 class OrderSaga(
     private val orders: OrderRepository,
@@ -42,7 +41,7 @@ class OrderSaga(
 
         // Stage 1 -> reserve the contended resource (skipped when resuming from RESERVED)
         if (order.status == OrderStatus.PENDING) {
-            val reservation = inventory.reserve(id, order.productId, order.qty)
+            val reservation = inventory.reserve(id, order.tripCode, order.qty)
             if (reservation.status == "REJECTED") {
                 stateMachine.reject(orderId, RejectionReason.SOLD_OUT)
                 return
@@ -54,16 +53,18 @@ class OrderSaga(
         val authorization = payments.authorize(id, order.amountCents)
         if (authorization.status == "DECLINED") {
             // Compensation: give the seats back, then reject.
-            inventory.release(id, order.productId)
+            inventory.release(id, order.tripCode)
             stateMachine.reject(orderId, RejectionReason.PAYMENT_DECLINED)
             return
         }
 
         // Stage 3 -> confirm the hold (guards the slow-payment-vs-TTL race, refinement #3): Inventory re-checks the hold is still valid; if it expired meanwhile we must NOT confirm a seat we no longer hold
-        val confirmation = inventory.confirm(id, order.productId)
+        val confirmation = inventory.confirm(id, order.tripCode)
         if (confirmation.status != "CONFIRMED") {
-            // TODO Phase 2: compensate the charge (refund/void on Payments): tracked in
-            // docs/design.md; for now the rejection is recorded and observable!
+            // The hold expired AFTER we already authorized the charge -> compensate the charge so we never keep
+            // money for a rejected order (idempotent void on Payments), then reject. Closes the "money kept on
+            // a rejected order" gap (audit C2).
+            payments.void(id)
             stateMachine.reject(orderId, RejectionReason.RESERVATION_EXPIRED)
             return
         }

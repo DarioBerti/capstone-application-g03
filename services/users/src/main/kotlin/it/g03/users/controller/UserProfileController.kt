@@ -28,21 +28,26 @@ class UserProfileController(private val service: UserProfileService) {
     fun me(@AuthenticationPrincipal jwt: Jwt): ProfileResponse =
         service.getOrProvision(jwt.toUserClaims()).toResponse()
 
-    // PUT /api/users/me -> update the caller's editable display fields.
+    // PUT /api/users/me -> update the caller's editable fields.
     @PutMapping("/me")
     fun updateMe(
         @AuthenticationPrincipal jwt: Jwt,
         @RequestBody request: UpdateProfileRequest,
     ): ProfileResponse =
-        service.update(jwt.subject, request).toResponse()
+        service.update(jwt.requireSubject(), request).toResponse()
 }
+
+// The Keycloak `sub` is the user's identity here. A token without it is malformed (the realm-import gotcha:
+// a mis-exported realm can drop `sub`); guard with a 400 (IllegalArgumentException) instead of an NPE.
+private fun Jwt.requireSubject(): String =
+    subject ?: throw IllegalArgumentException("token is missing the subject (sub) claim")
 
 // Maps Keycloak's standard OIDC claims onto our value type. Email can be absent on a token (scope
 // dependent); we fall back to a stable, unique placeholder derived from the subject so the NOT NULL /
 // UNIQUE(email) invariant always holds without inventing a real-looking address.
 private fun Jwt.toUserClaims() = UserClaims(
-    sub = subject,
-    email = getClaimAsString("email") ?: "$subject@no-email.eurotransit.local",
+    sub = requireSubject(),
+    email = getClaimAsString("email") ?: "${requireSubject()}@no-email.eurotransit.local",
     givenName = getClaimAsString("given_name"),
     familyName = getClaimAsString("family_name"),
     preferredUsername = getClaimAsString("preferred_username"),

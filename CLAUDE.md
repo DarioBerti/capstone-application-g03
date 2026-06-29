@@ -32,6 +32,18 @@ path. SLOs, dashboards, tracing, and chaos experiments all center on it.
   `order-placed`, `order-confirmed`, `order-rejected`, `inventory-reserved`, `inventory-released`,
   `payment-authorized`, `notification-requested`.
 
+## General rules
+- When editing or creating code files, do NOT add useless comments in any circumstance. The only comments which can be considered useful are the following:
+	- Complex logic (e.g. bit-twiddling math, complex one-liners, etc.)
+	- Citations or algorithms taken from documents such as papers or other implementations
+	- Implementation quirks
+	- TODOs or FIXMEs
+	Useless type of comments include examples such as:
+	- Explaining a short function which has a self-explanatory name
+	- Outlining an obvious algorithm (e.g. a for loop)
+	- A short logic that already has self explanatory class names / variables
+	DO NOT REMOVE EXISTING COMMENTS UNLESS SPECIFICALLY ASKED TO.
+- When writing in Italian, you MUST ALWAYS use the correct accented vowels in words that require them (e.g. è, perché, più, etc, etc). DO NOT under any circumstance write these words without the accented letter (perch) or without the accent (perche) or by using the aphostrophe (') as an accent (e.g. piu' or perche').
 ## Tech stack
 
 - **Kotlin 2.2.x**, **Spring Boot 4.0.x**, Gradle (Kotlin DSL), **Java 21** toolchain.
@@ -148,6 +160,10 @@ Every service uses all three layers. **A controller never calls a repository dir
 Even read-mostly services (e.g. `catalog`) route through a Service. (`catalog` currently shortcuts
 controller → repository — that is debt to fix, not an accepted pattern.)
 
+The Service layer is an `interface` + `@Service` impl: `<Svc>Service` (no annotation) implemented by
+`<Svc>ServiceImpl` (`@Service`), one type per file in `service/`. **Controllers inject the interface,
+never the impl.**
+
 ### Source layout (folders = packages)
 
 Organize each service's source **by layer into folders whose names are the package segments** — see
@@ -157,7 +173,7 @@ Organize each service's source **by layer into folders whose names are the packa
 |---|---|---|
 | `controller/` | `it.g03.<svc>.controller` | REST controllers + the service's `GlobalExceptionHandler` (`@RestControllerAdvice`) |
 | `dto/` | `it.g03.<svc>.dto` | request/response DTOs, the `ErrorResponse` DTO, and entity↔DTO mappers (`toResponse()`) |
-| `service/` | `it.g03.<svc>.service` | business logic (services, saga, state machine, outbox relay, reconciler) |
+| `service/` | `it.g03.<svc>.service` | business logic — each service as an `interface` (`XxxService`) + `@Service` impl (`XxxServiceImpl`); also saga, state machine, outbox relay, reconciler |
 | `repository/` | `it.g03.<svc>.repository` | Spring Data repositories — **one repository per file** |
 | `entities/` | `it.g03.<svc>.entities` | JPA entities (+ their tightly-bound enums) |
 | `events/` | `it.g03.<svc>.events` | Kafka listeners, publishers, `Topics`, event payloads |
@@ -192,7 +208,7 @@ fun list(filter: ProductFilter, pageable: Pageable): Page<ProductResponse> =
 ### Money-path correctness (Pillars A & B)
 - **Idempotency is mandatory**: a duplicated `order-placed` event or a retried payment authorization
   must not double-reserve or double-charge. The codebase enforces this with DB constraints
-  (`UNIQUE(order_id)` in Payments, `UNIQUE(order_id, product_id)` in Inventory) + fast-path replay;
+  (`UNIQUE(order_id)` in Payments, `UNIQUE(order_id, trip_code)` in Inventory) + fast-path replay;
   Orders uses a **transactional outbox** so the business change and its event commit atomically.
 - **Inventory invariant: never oversell.** Reservation is an atomic conditional decrement; two
   customers cannot buy the last seat. Document the CAP/PACELC choice in `inventory`'s CLAUDE.md.
@@ -217,10 +233,11 @@ One CNPG cluster, one `eurotransit` database. Each service owns its own **schema
 
 ```
 CNPG cluster: eurotransit-dev   →   database: eurotransit
-  schema catalog    → products
+  schema catalog    → stations, trips
   schema orders     → orders, outbox_events
-  schema inventory  → inventory_items, reservations
+  schema inventory  → trip_seats, reservations
   schema payments   → payment_authorizations
+  schema users      → user_profiles
   (notifications: stateless, no schema)
 ```
 

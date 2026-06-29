@@ -67,7 +67,6 @@ dependencies {
 	runtimeOnly("org.flywaydb:flyway-database-postgresql")
 
 	runtimeOnly("org.postgresql:postgresql")
-	runtimeOnly("com.h2database:h2")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
@@ -76,6 +75,13 @@ dependencies {
 	testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// Tests run against a real PostgreSQL via Testcontainers (no H2) — versions from the Spring Boot BOM.
+	// The money-path schema (UNIQUE(idempotency_key), CHECKs, transactional outbox) is only exercised
+	// faithfully on real Postgres + Flyway, not on H2 with ddl-auto.
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:testcontainers-postgresql")
+	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
 }
 
 kotlin {

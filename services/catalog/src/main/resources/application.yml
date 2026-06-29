@@ -25,6 +25,9 @@ spring:
     hibernate:
       # Hibernate only validates the Flyway-owned schema; it never mutates it
       ddl-auto: validate
+    # Don't hold the persistence context + DB connection open for the whole request (it buys nothing for
+    # these flat, eagerly-mapped reads and only ties up a pooled connection longer — undermines bulkheading).
+    open-in-view: false
     # print SQL to make persistence behavior easier to inspect locally (off in the cluster overlay)
     show-sql: true
     properties:

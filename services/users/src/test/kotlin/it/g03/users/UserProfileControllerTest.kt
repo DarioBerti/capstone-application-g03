@@ -37,7 +37,7 @@ class UserProfileControllerTest {
         assertEquals(0, profiles.count())
     }
 
-    // Valid token → 200, profile JIT-created from the token claims.
+    // Valid token → 200, profile JIT-created from the token claims (with a surrogate id in the response).
     @Test
     fun `me with a token provisions and returns the profile`() {
         mockMvc.get("/api/users/me") {
@@ -50,10 +50,23 @@ class UserProfileControllerTest {
             )
         }.andExpect {
             status { isOk() }
+            jsonPath("$.id") { exists() }
             jsonPath("$.keycloakSub") { value("kc-sub-42") }
             jsonPath("$.email") { value("grace@eurotransit.test") }
         }
         assertEquals(1, profiles.count())
+    }
+
+    // A token without a `sub` claim (realm-import gotcha) is a 400, not a 500/NPE; nothing is provisioned.
+    @Test
+    fun `me with a token missing the subject is a bad request`() {
+        mockMvc.get("/api/users/me") {
+            // keep a non-`sub` claim so the Jwt still builds, but drop `sub` itself
+            with(jwt().jwt { builder -> builder.claim("email", "x@eurotransit.test").claims { it.remove("sub") } })
+        }.andExpect {
+            status { isBadRequest() }
+        }
+        assertEquals(0, profiles.count())
     }
 
     // Actuator readiness must stay open (probes run without a token).

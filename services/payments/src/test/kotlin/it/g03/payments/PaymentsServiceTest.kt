@@ -8,11 +8,14 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @SpringBootTest(  // boot the full Spring app context to test service + repository wiring
@@ -22,6 +25,7 @@ import kotlin.test.assertTrue
         "events.publish.enabled=false",
     ],
 )
+@Import(TestcontainersConfiguration::class)
 class PaymentsServiceTest {
 
     // Injects the service under test
@@ -40,21 +44,26 @@ class PaymentsServiceTest {
         pool.shutdownNow()
     }
 
-    // Verifies an amount below the threshold is persisted as AUTHORIZED (one row)
+    // Verifies an amount below the threshold is persisted as AUTHORIZED with a PSP reference + capture stamp
     @Test
     fun `authorize persists AUTHORIZED below the decline threshold`() {
         val outcome = service.authorize("order-1", 5_000)
 
         assertEquals(AuthorizationStatus.AUTHORIZED, outcome.authorization.status)
         assertEquals(1, repository.count())
+        assertNotNull(outcome.authorization.pspReference, "an AUTHORIZED charge carries a PSP reference")
+        assertNotNull(outcome.authorization.capturedAt, "an AUTHORIZED charge is captured")
+        assertNull(outcome.authorization.declineReason)
     }
 
-    // Verifies the deterministic mock-PSP rule: amounts at or above the threshold are DECLINED
+    // Verifies the deterministic mock-PSP rule: amounts at or above the threshold are DECLINED with a reason
     @Test
     fun `amounts at or above the threshold are DECLINED (mock PSP rule)`() {
         val outcome = service.authorize("order-big", 100_000)
 
         assertEquals(AuthorizationStatus.DECLINED, outcome.authorization.status)
+        assertNotNull(outcome.authorization.declineReason, "a DECLINED authorization records why")
+        assertNull(outcome.authorization.pspReference, "nothing was authorized -> no PSP reference")
     }
 
     // Verifies a retried authorize is an idempotent replay: it must NOT double-charge (no second row)
@@ -77,6 +86,22 @@ class PaymentsServiceTest {
 
         assertTrue(replay.replayed)
         assertEquals(AuthorizationStatus.DECLINED, replay.authorization.status)
+    }
+
+    // Verifies the compensation (audit C2): voiding an AUTHORIZED charge marks it VOIDED + stamps voided_at,
+    // and is idempotent (a second void replays the stored outcome).
+    @Test
+    fun `void marks an AUTHORIZED charge VOIDED and is idempotent`() {
+        service.authorize("order-1", 5_000)
+
+        val voided = service.void("order-1")
+        assertEquals(AuthorizationStatus.VOIDED, voided.authorization.status)
+        assertNotNull(voided.authorization.voidedAt, "a voided charge is stamped")
+
+        val replay = service.void("order-1")
+        assertTrue(replay.replayed, "a second void is an idempotent no-op")
+        assertEquals(AuthorizationStatus.VOIDED, replay.authorization.status)
+        assertEquals(1, repository.count(), "void must not create a new row")
     }
 
     // Verifies the "must not double-charge" race: concurrent duplicates of the same order commit exactly ONE charge

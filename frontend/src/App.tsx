@@ -7,7 +7,7 @@ import { currentUser, isAuthenticated, login, logout } from './auth'
 import type { Profile } from './types'
 
 export default function App() {
-  const [productId, setProductId] = useState('')
+  const [tripCode, setTripCode] = useState('')
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null)
   const authed = isAuthenticated()
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -42,8 +42,8 @@ export default function App() {
 
       {authed ? (
         <main className="grid">
-          <CatalogPanel onSelect={setProductId} />
-          <OrderForm productId={productId} onProductId={setProductId} onPlaced={setActiveOrderId} />
+          <CatalogPanel onSelect={setTripCode} />
+          <OrderForm tripCode={tripCode} onTripCode={setTripCode} onPlaced={setActiveOrderId} />
           <SagaTimeline orderId={activeOrderId} />
         </main>
       ) : (
