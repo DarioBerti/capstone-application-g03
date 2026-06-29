@@ -1,0 +1,9 @@
+# Keep the Docker build context small and clean
+# Exclude local build output, caches and VCS metadata
+.gradle/
+build/
+.git/
+.idea/
+.vscode/
+*.iml
+.DS_Store

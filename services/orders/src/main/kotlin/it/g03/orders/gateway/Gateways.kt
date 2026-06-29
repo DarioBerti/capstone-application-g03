@@ -5,6 +5,7 @@ import io.github.resilience4j.circuitbreaker.CallNotPermittedException
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.client.ClientHttpRequestInterceptor
 import org.springframework.http.client.JdkClientHttpRequestFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.client.HttpClientErrorException
@@ -16,7 +17,10 @@ import java.util.UUID
 
 /*
  * Synchronous gateways to the sibling services ("a decision must be made NOW" -> these calls happen INSIDE the async pipeline, see docs/design.md). They are interfaces so the saga is testable with fakes; the HTTP implementations carry connect/read TIMEOUTS on every call (Pillar C: no unbounded waits).
- * Both HTTP implementations route every remote call through [GatewayResilience] (Fase 2 #1+#2): bulkhead + retry(backoff+jitter) on both, plus the circuit breaker on Payments.
+ * Inventory/Payments are OAuth2 resource servers, so every call carries a service bearer token (client
+ * credentials) attached by the interceptor below — the saga thread has no user SecurityContext to forward.
+ * Both HTTP implementations also route every remote call through [GatewayResilience] (Fase 2 #1+#2): bulkhead +
+ * retry(backoff+jitter) on both, plus the circuit breaker on Payments.
  */
 
 // Mirror of Inventory's response statuses (as always, strings to avoid duplicating the enum)
@@ -26,14 +30,14 @@ data class ReservationResult(val status: String, val replayed: Boolean)
 data class AuthorizationResult(val status: String, val replayed: Boolean)
 
 interface InventoryGateway {
-    fun reserve(orderId: String, productId: String, qty: Int): ReservationResult // place a hold on the seats
-    fun confirm(orderId: String, productId: String): ReservationResult     // turn the hold into a firm sale
-    fun release(orderId: String, productId: String): ReservationResult     // give the hold back (compensation)
+    fun reserve(orderId: String, tripCode: String, qty: Int): ReservationResult // place a hold on the seats
+    fun confirm(orderId: String, tripCode: String): ReservationResult     // turn the hold into a firm sale
+    fun release(orderId: String, tripCode: String): ReservationResult     // give the hold back (compensation)
 }
 
 interface PaymentsGateway {
     fun authorize(orderId: String, amountCents: Long): AuthorizationResult // charge/authorize the payment
-    fun void(orderId: String): AuthorizationResult                          // reverse the charge (saga compensation, idempotent)
+    fun void(orderId: String): AuthorizationResult // reverse the charge (saga compensation, idempotent, keyed by orderId)
 }
 
 // Shared bounded-timeout request factory: connect 2s, read 5s
@@ -42,10 +46,18 @@ private fun timeoutFactory() =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
     ).apply { setReadTimeout(Duration.ofSeconds(5)) }
 
+// Attaches the service bearer token to every outbound call. If no token is available the call proceeds
+// without one (the downstream 401 then surfaces as a normal saga failure, recovered by Kafka redelivery).
+private fun bearerAuth(tokens: ServiceTokenProvider) =
+    ClientHttpRequestInterceptor { request, body, execution ->
+        tokens.token()?.let { request.headers.setBearerAuth(it) }
+        execution.execute(request, body)
+    }
+
 // Exact mirrors of the sibling services' response bodies
 private data class InventoryReservationDto(
     val orderId: String,
-    val productId: String,
+    val tripCode: String,
     val qty: Int,
     val status: String,
     val expiresAt: Instant,
@@ -65,40 +77,48 @@ class HttpInventoryGateway(
     // in-cluster the env var points at the Service DNS (http://inventory:8080)
     // the localhost default is for local multi-process dev
     @Value("\${app.inventory-base-url}") baseUrl: String,
-    // bulkhead + retry only (NO breaker): Inventory is the contended resource, not a money-path coordinator. reserve/confirm/release are idempotent (UNIQUE(order_id, product_id), design #6), so a retry of a transient transport fault is safe. After the retries are exhausted the exception still propagates (as before #2) -> Kafka redelivery / the recovery sweeper's per-order catch.
+    tokens: ServiceTokenProvider,
+    // bulkhead + retry only (NO breaker): Inventory is the contended resource, not a money-path coordinator. reserve/confirm/release are idempotent (UNIQUE(order_id, trip_code), design #6), so a retry of a transient transport fault is safe. After the retries are exhausted the exception still propagates -> Kafka redelivery / the recovery sweeper's per-order catch.
     private val resilience: GatewayResilience,
 ) : InventoryGateway {
 
-    private val client = RestClient.builder().baseUrl(baseUrl).requestFactory(timeoutFactory()).build()
+    private val client = RestClient.builder()
+        .baseUrl(baseUrl)
+        .requestFactory(timeoutFactory())
+        .requestInterceptor(bearerAuth(tokens))
+        .build()
 
     // POST /api/inventory/reservations -> place a hold on the seats for this order
-    override fun reserve(orderId: String, productId: String, qty: Int): ReservationResult =
+    override fun reserve(orderId: String, tripCode: String, qty: Int): ReservationResult =
         resilience.call("inventory") {
             val dto = client.post()
                 .uri("/api/inventory/reservations")
-                .body(mapOf("orderId" to orderId, "productId" to productId, "qty" to qty))
+                .body(mapOf("orderId" to orderId, "tripCode" to tripCode, "qty" to qty))
                 .retrieve()
-                .body(InventoryReservationDto::class.java)!!
+                .body(InventoryReservationDto::class.java)
+                ?: error("empty reserve response from inventory for order=$orderId trip=$tripCode")
             ReservationResult(dto.status, dto.replayed)
         }
 
-    // POST /api/inventory/reservations/{o}/{p}/confirm -> turn the hold into a firm sale (idempotent)
-    override fun confirm(orderId: String, productId: String): ReservationResult =
+    // POST /api/inventory/reservations/{o}/{t}/confirm -> turn the hold into a firm sale (idempotent)
+    override fun confirm(orderId: String, tripCode: String): ReservationResult =
         resilience.call("inventory") {
             val dto = client.post()
-                .uri("/api/inventory/reservations/{o}/{p}/confirm", orderId, productId)
+                .uri("/api/inventory/reservations/{o}/{t}/confirm", orderId, tripCode)
                 .retrieve()
-                .body(InventoryReservationDto::class.java)!!
+                .body(InventoryReservationDto::class.java)
+                ?: error("empty confirm response from inventory for order=$orderId trip=$tripCode")
             ReservationResult(dto.status, dto.replayed)
         }
 
-    // POST /api/inventory/reservations/{o}/{p}/release -> give the hold back (saga compensation, idempotent)
-    override fun release(orderId: String, productId: String): ReservationResult =
+    // POST /api/inventory/reservations/{o}/{t}/release -> give the hold back (saga compensation, idempotent)
+    override fun release(orderId: String, tripCode: String): ReservationResult =
         resilience.call("inventory") {
             val dto = client.post()
-                .uri("/api/inventory/reservations/{o}/{p}/release", orderId, productId)
+                .uri("/api/inventory/reservations/{o}/{t}/release", orderId, tripCode)
                 .retrieve()
-                .body(InventoryReservationDto::class.java)!!
+                .body(InventoryReservationDto::class.java)
+                ?: error("empty release response from inventory for order=$orderId trip=$tripCode")
             ReservationResult(dto.status, dto.replayed)
         }
 }
@@ -106,13 +126,18 @@ class HttpInventoryGateway(
 @Component // registers this HTTP gateway as the production PaymentsGateway bean
 class HttpPaymentsGateway(
     @Value("\${app.payments-base-url}") baseUrl: String,
+    tokens: ServiceTokenProvider,
     // Resilience policies (bulkhead + circuit breaker + retry) are applied PROGRAMMATICALLY via [GatewayResilience], NOT the @CircuitBreaker/@Retry/@Bulkhead annotations: the resilience4j starter targets Spring Boot 3, so the AOP aspects might not weave on Boot 4 (docs/agent-log.md #2) — the registry beans are verified to bind (OrdersApplicationTests), so decorating through them is deterministic. Config: resilience4j.{circuitbreaker,retry,bulkhead}.instances.payments in application.yml
     private val resilience: GatewayResilience,
     private val meterRegistry: MeterRegistry,
 ) : PaymentsGateway {
 
     private val log = LoggerFactory.getLogger(javaClass)
-    private val client = RestClient.builder().baseUrl(baseUrl).requestFactory(timeoutFactory()).build()
+    private val client = RestClient.builder()
+        .baseUrl(baseUrl)
+        .requestFactory(timeoutFactory())
+        .requestInterceptor(bearerAuth(tokens))
+        .build()
 
     // Outcome-tagged failure counter for the Orders->Payments call (Pillar D, same idiom as InventoryService.outcomes): outcome = unavailable | client_error | bulkhead_full
     private fun failures(outcome: String) = meterRegistry.counter("orders_payment_failures_total", "outcome", outcome)
@@ -126,7 +151,8 @@ class HttpPaymentsGateway(
                     .uri("/api/payments/authorizations")
                     .body(mapOf("orderId" to orderId, "amountCents" to amountCents))
                     .retrieve()
-                    .body(PaymentAuthorizationDto::class.java)!!
+                    .body(PaymentAuthorizationDto::class.java)
+                    ?: error("empty authorize response from payments for order=$orderId")
                 AuthorizationResult(dto.status, dto.replayed)
             }
         } catch (e: CallNotPermittedException) {
@@ -155,7 +181,8 @@ class HttpPaymentsGateway(
                 val dto = client.post()
                     .uri("/api/payments/authorizations/{orderId}/void", orderId)
                     .retrieve()
-                    .body(PaymentAuthorizationDto::class.java)!!
+                    .body(PaymentAuthorizationDto::class.java)
+                    ?: error("empty void response from payments for order=$orderId")
                 AuthorizationResult(dto.status, dto.replayed)
             }
         } catch (e: CallNotPermittedException) {

@@ -12,9 +12,11 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Outbound event publisher for informational events: "inventory-reserved" and "inventory-released"
+ * Outbound event publisher for informational events: "inventory-reserved" and "inventory-released".
  *
- * These events are for observability and notifications only. The main saga decision is returned synchronously to Orders, so publishing these events can be "best-effort" after commit. Critical order events use a transactional outbox instead
+ * These events are for observability and notifications only. The main saga decision is returned
+ * synchronously to Orders, so publishing these events can be "best-effort" after commit. Critical order
+ * events use a transactional outbox instead.
  */
 
 // The port: the service depends on this abstraction, not on Kafka directly (swappable in tests)
@@ -26,7 +28,7 @@ interface EventPublisher {
 data class InventoryReservedEvent(
     val eventId: UUID = UUID.randomUUID(),
     val orderId: String,
-    val productId: String,
+    val tripCode: String,
     val qty: Int,
     val occurredAt: Instant = Instant.now(),
 )
@@ -35,7 +37,7 @@ data class InventoryReservedEvent(
 data class InventoryReleasedEvent(
     val eventId: UUID = UUID.randomUUID(),
     val orderId: String,
-    val productId: String,
+    val tripCode: String,
     val qty: Int,
     val reason: String,
     val occurredAt: Instant = Instant.now(),
@@ -45,7 +47,9 @@ data class InventoryReleasedEvent(
 class EventPublishingConfig {
 
     /**
-     * Real Kafka publisher. Disabled with "events.publish.enabled=false" (used by tests, which have no broker: KafkaTemplate.send would block on metadata otherwise) [so, registered only when events.publish.enabled is true (the default), i.e. in real runs]
+     * Real Kafka publisher. Disabled with "events.publish.enabled=false" (used by tests, which have no broker:
+     * KafkaTemplate.send would block on metadata otherwise) [registered only when events.publish.enabled is
+     * true (the default), i.e. in real runs].
      */
     @Bean
     @ConditionalOnProperty(name = ["events.publish.enabled"], havingValue = "true", matchIfMissing = true)
@@ -59,7 +63,7 @@ class EventPublishingConfig {
             }
         }
 
-    /** No-op fallback when publishing is disabled (tests / local runs) [so, registered only if no other EventPublisher exists (i.e. when the Kafka one is disabled)] */
+    /** No-op fallback when publishing is disabled (tests / local runs) [registered only if no other EventPublisher exists]. */
     @Bean
     @ConditionalOnMissingBean(EventPublisher::class)
     fun noopEventPublisher(): EventPublisher = object : EventPublisher {

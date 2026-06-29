@@ -2,12 +2,12 @@ import { useState, type FormEvent } from 'react'
 import { api } from '../api'
 
 interface Props {
-  productId: string
-  onProductId: (productId: string) => void
+  tripCode: string
+  onTripCode: (tripCode: string) => void
   onPlaced: (orderId: string) => void
 }
 
-export default function OrderForm({ productId, onProductId, onPlaced }: Props) {
+export default function OrderForm({ tripCode, onTripCode, onPlaced }: Props) {
   const [qty, setQty] = useState(1)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -19,7 +19,7 @@ export default function OrderForm({ productId, onProductId, onPlaced }: Props) {
     setError(null)
     setAccepted(null)
     try {
-      const order = await api.placeOrder({ productId, qty })
+      const order = await api.placeOrder({ tripCode, qty })
       setAccepted(`202 Accepted · ${order.orderId} (${order.status})`)
       onPlaced(order.orderId)
     } catch (e) {
@@ -36,11 +36,11 @@ export default function OrderForm({ productId, onProductId, onPlaced }: Props) {
       </div>
       <form onSubmit={submit} className="form">
         <label>
-          Product ID
+          Trip code
           <input
-            value={productId}
-            onChange={(e) => onProductId(e.target.value)}
-            placeholder="pick from catalog or type an id"
+            value={tripCode}
+            onChange={(e) => onTripCode(e.target.value)}
+            placeholder="pick from catalog or type a code (e.g. FR9592-20260629)"
             required
           />
         </label>
@@ -53,7 +53,7 @@ export default function OrderForm({ productId, onProductId, onPlaced }: Props) {
             onChange={(e) => setQty(Math.max(1, Number(e.target.value)))}
           />
         </label>
-        <button type="submit" disabled={busy || !productId}>
+        <button type="submit" disabled={busy || !tripCode}>
           {busy ? 'Placing…' : 'POST /api/orders'}
         </button>
       </form>

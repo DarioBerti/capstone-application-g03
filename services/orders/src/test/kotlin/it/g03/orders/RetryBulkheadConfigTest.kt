@@ -5,6 +5,7 @@ import io.github.resilience4j.retry.RetryRegistry
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.http.HttpStatus
 import org.springframework.web.client.HttpClientErrorException
 import org.springframework.web.client.HttpServerErrorException
@@ -26,6 +27,7 @@ import kotlin.test.assertTrue
         "app.recovery.enabled=false",
     ],
 )
+@Import(TestcontainersConfiguration::class)
 class RetryBulkheadConfigTest {
 
     @Autowired private lateinit var retries: RetryRegistry

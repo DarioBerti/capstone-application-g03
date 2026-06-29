@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -29,6 +30,7 @@ import kotlin.test.assertTrue
     ],
 )
 @Tag("chaos-01") // anticipates chaos #1 (payments-latency): real gateway opens the breaker + fast-fails to UNAVAILABLE
+@Import(TestcontainersConfiguration::class)
 class PaymentsGatewayBreakerIntegrationTest {
 
     @Autowired

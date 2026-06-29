@@ -13,16 +13,19 @@ object Topics {
 
 /**
  * Event payloads (JSON over Kafka). Each service keeps its OWN copy of the event shapes it touches (no shared library): duplicating a few small data classes is the standard microservice trade-off against coupling every service to a common jar's release cycle.
- * Every event carries an eventId (consumer-side dedup/tracing) and occurredAt
+ * Every event carries an eventId (consumer-side dedup/tracing) and occurredAt.
  */
 
-// Emitted when an order is first placed; triggers the saga
+// Emitted when an order is first placed; triggers the saga. Carries the buyer identity + email snapshot so
+// the downstream notification can reach the real customer without a money-path call to Users.
 data class OrderPlacedEvent(
     val eventId: UUID = UUID.randomUUID(),
     val orderId: String,
-    val productId: String,
+    val tripCode: String,
     val qty: Int,
     val amountCents: Long,
+    val buyerSub: String,
+    val buyerEmail: String? = null,
     val occurredAt: Instant = Instant.now(),
 )
 

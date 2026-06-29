@@ -5,8 +5,8 @@
 # (e) exit on first failure, (u) unset vars are errors, (o pipefail) fail if any pipe stage fails
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-# Keep the service list in one place so every recipe stays aligned: 5 cooperating services (directory names under services/)
-services := "catalog orders inventory payments notifications"
+# Keep the service list in one place so every recipe stays aligned: 6 cooperating services (directory names under services/)
+services := "catalog orders inventory payments notifications users"
 
 # TODO: cambiare in base al cluster usato
 # Container registry (matches Lab03/Lab04 convention)

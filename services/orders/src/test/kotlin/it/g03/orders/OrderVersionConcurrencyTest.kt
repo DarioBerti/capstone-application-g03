@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -35,6 +36,7 @@ import kotlin.test.assertEquals
     ],
 )
 @Tag("chaos-03") // anticipates chaos #3 (node-disruption): two pods racing a terminal transition emit exactly one event
+@Import(TestcontainersConfiguration::class)
 class OrderVersionConcurrencyTest {
 
     @Autowired lateinit var stateMachine: OrderStateMachine
@@ -53,7 +55,7 @@ class OrderVersionConcurrencyTest {
 
     @Test
     fun `concurrent confirm emits exactly one order-confirmed (no duplicate terminal events)`() {
-        val order = orderService.placeOrder("TRENO-TEST", 1)
+        val order = orderService.placeOrder("FR9592-20260629", 1, buyerSub = "buyer-1", buyerEmail = "buyer@example.org")
         val id = order.id.toString()
         val start = CountDownLatch(1)
 

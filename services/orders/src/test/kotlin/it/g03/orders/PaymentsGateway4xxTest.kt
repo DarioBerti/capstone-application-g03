@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import java.net.InetSocketAddress
@@ -29,6 +30,7 @@ import kotlin.test.assertEquals
         "app.recovery.enabled=false",
     ],
 )
+@Import(TestcontainersConfiguration::class)
 class PaymentsGateway4xxTest {
 
     companion object {

@@ -1,17 +1,10 @@
+# Cluster overlay — activate with SPRING_PROFILES_ACTIVE=postgres.
+# The datasource, Flyway and schema config now live in the base application.yml (Postgres everywhere);
+# this profile only tightens things that should differ in a real cluster vs local dev.
 spring:
-  datasource:
-    # values come from environment variables injected by the deployment
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:paymentsdb}
-    username: ${DB_USER:payments}
-    password: ${DB_PASS:payments}
-    driver-class-name: org.postgresql.Driver
-  flyway:
-    # Flyway owns schema changes in the PostgreSQL profile; Hibernate only checks consistency
-    enabled: true    # Flyway owns the schema in-cluster; Hibernate only validates (ddl-auto)
-  h2:
-    console:
-      enabled: false
   jpa:
+    # don't log every statement in the cluster
+    show-sql: false
     hibernate:
       # don't let Hibernate mutate the production schema; only validate mappings
       ddl-auto: validate
@@ -19,6 +12,12 @@ spring:
       hibernate:
         # match PostgreSQL behavior more closely in SQL generation
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
+management:
+  endpoint:
+    health:
+      # don't leak internal health details over the cluster probe endpoint
+      show-details: never
 
 # Structured JSON logging (Pillar D, §7.5): in-cluster the console emits ECS JSON so the platform's log
 # pipeline parses fields, and micrometer-tracing's traceId/spanId (already in MDC) surface as

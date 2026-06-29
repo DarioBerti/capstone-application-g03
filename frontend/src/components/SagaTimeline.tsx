@@ -78,7 +78,7 @@ export default function SagaTimeline({ orderId }: { orderId: string | null }) {
             </li>
           )
         })}
-        {rejected && <li className="rejected">REJECTED · {order?.reason}</li>}
+        {rejected && <li className="rejected">REJECTED · {order?.rejectionReason}</li>}
       </ol>
 
       <dl className="kv">

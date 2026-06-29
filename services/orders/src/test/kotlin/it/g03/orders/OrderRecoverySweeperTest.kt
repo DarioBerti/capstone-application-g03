@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Primary
@@ -38,6 +39,7 @@ import kotlin.test.assertTrue
     ],
 )
 @Tag("chaos-01") // anticipates chaos #1 (payments-latency): a parked order drains/bounds once Payments heals
+@Import(TestcontainersConfiguration::class)
 class OrderRecoverySweeperTest {
 
     @TestConfiguration // swap the HTTP gateways for the steerable fakes (reused from OrderSagaTest)
@@ -63,7 +65,7 @@ class OrderRecoverySweeperTest {
 
     @Test
     fun `an order parked beyond max-park is REJECTED without charging`() {
-        val order = orderService.placeOrder("TRENO-TEST", 1)
+        val order = orderService.placeOrder("FR9592-20260629", 1, buyerSub = "buyer-1", buyerEmail = "buyer@example.org")
         stateMachine.markReserved(order.id)
         stateMachine.markPaymentPending(order.id)
         payments.authorizeCalls = 0
@@ -72,7 +74,7 @@ class OrderRecoverySweeperTest {
 
         val swept = orders.findById(order.id).orElseThrow()
         assertEquals(OrderStatus.REJECTED, swept.status, "a hold parked past its TTL must be rejected, not retried")
-        assertEquals(RejectionReason.RESERVATION_EXPIRED, swept.reason)
+        assertEquals(RejectionReason.RESERVATION_EXPIRED, swept.rejectionReason)
         assertEquals(0, payments.authorizeCalls, "money-safe: the card is NOT charged for an expired hold")
     }
 
@@ -81,7 +83,7 @@ class OrderRecoverySweeperTest {
     // and the void is retried next sweep. Money-safety over bounded retention; it drains once Payments recovers.
     @Test
     fun `parked order whose void is UNAVAILABLE stays PAYMENT_PENDING (retried, not abandoned)`() {
-        val order = orderService.placeOrder("TRENO-TEST", 1)
+        val order = orderService.placeOrder("FR9592-20260629", 1, buyerSub = "buyer-1", buyerEmail = "buyer@example.org")
         stateMachine.markReserved(order.id)
         stateMachine.markPaymentPending(order.id)
         payments.voidStatus = "UNAVAILABLE" // the storno cannot complete now
@@ -90,7 +92,7 @@ class OrderRecoverySweeperTest {
 
         val swept = orders.findById(order.id).orElseThrow()
         assertEquals(OrderStatus.PAYMENT_PENDING, swept.status, "an unreachable void must keep the order parked, never abandon a possible live charge")
-        assertEquals(null, swept.reason, "still parked, not rejected")
+        assertEquals(null, swept.rejectionReason, "still parked, not rejected")
         assertTrue(payments.voided.isNotEmpty(), "the void was attempted")
         assertEquals(0, payments.authorizeCalls, "money-safe: never re-authorizes at the expiry boundary")
     }

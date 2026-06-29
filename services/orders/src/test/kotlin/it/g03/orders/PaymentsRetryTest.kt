@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.http.HttpStatus
 import org.springframework.web.client.HttpClientErrorException
 import org.springframework.web.client.HttpServerErrorException
@@ -28,6 +29,7 @@ import kotlin.test.assertFailsWith
     ],
 )
 @Tag("chaos-01") // anticipates chaos #1 (payments-latency): a transient blip is absorbed by retry, never trips the breaker
+@Import(TestcontainersConfiguration::class)
 class PaymentsRetryTest {
 
     @Autowired private lateinit var retries: RetryRegistry

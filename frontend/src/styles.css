@@ -20,6 +20,8 @@ body {
 
 .app { max-width: 1200px; margin: 0 auto; padding: 24px; }
 .app-head h1 { margin: 0 0 4px; font-size: 20px; }
+.app-head-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.auth-box { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .muted { color: var(--muted); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 code { font-family: ui-monospace, Menlo, monospace; background: #0b0d11; padding: 1px 5px; border-radius: 4px; }

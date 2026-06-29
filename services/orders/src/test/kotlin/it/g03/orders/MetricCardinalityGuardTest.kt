@@ -7,6 +7,7 @@ import it.g03.orders.gateway.PaymentsGateway
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -29,6 +30,10 @@ import kotlin.test.assertTrue
         "app.kafka-listeners-enabled=false",
         "app.outbox.enabled=false",
         "app.recovery.enabled=false",
+        // Pin Payments at a guaranteed-dead port so the void probe deterministically falls back to UNAVAILABLE,
+        // regardless of any real service a developer happens to be running on the default 8082 (which, now that
+        // Payments is an OAuth2 resource server, would answer 401 -> FAILED and flake this guard).
+        "app.payments-base-url=http://localhost:1",
         // Shrink the intake budget so a shed is deterministic. NB: limit-for-period=2 (NOT 1) is deliberately
         // DISTINCT from OrdersIntakeRateLimiterTest's property set so Spring gives this class its OWN cached
         // context — otherwise the two would share one context and this test consuming the rate-limiter permit
@@ -38,6 +43,7 @@ import kotlin.test.assertTrue
         "resilience4j.ratelimiter.instances.orders-intake.timeout-duration=PT0S",
     ],
 )
+@Import(TestcontainersConfiguration::class)
 class MetricCardinalityGuardTest {
 
     @Autowired private lateinit var meterRegistry: MeterRegistry

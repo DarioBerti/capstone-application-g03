@@ -5,6 +5,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
 import tools.jackson.databind.json.JsonMapper
@@ -37,6 +38,7 @@ import kotlin.test.assertTrue
     ],
 )
 @ExtendWith(OutputCaptureExtension::class)
+@Import(TestcontainersConfiguration::class)
 class OrdersStructuredLoggingTest {
 
     private val log = LoggerFactory.getLogger(javaClass)

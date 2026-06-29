@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component
 import java.util.UUID
 
 /**
- * THE ORCHESTRATED SAGA (design decision #3): Orders is the coordinator; the stages are driven by Kafka (order-placed triggers this handler) but each decision is taken via a SYNCHRONOUS call ("a decision must be made now")!
+ * THE ORCHESTRATED SAGA (design decision #3): Orders is the coordinator; the stages are driven by Kafka (order-placed triggers this handler) but each decision is taken via a SYNCHRONOUS call ("a decision must be made now").
  *
  * Crash/redelivery semantics (at-least-once, chaos #2/#4):
  * - this method deliberately holds NO database transaction across remote calls; each transition commits separately via [OrderStateMachine]
@@ -20,7 +20,6 @@ import java.util.UUID
  *
  * Resilience (Pillar C, Phase 2): the Payments call is wrapped in a circuit breaker (see [HttpPaymentsGateway]). A transport fault no longer THROWS out of the saga — it returns "UNAVAILABLE", which PARKS the order in PAYMENT_PENDING for [OrderRecoverySweeper] to retry. A lost optimistic-lock race on a concurrent terminal transition (two sweeper pods, or sweep + redelivery) surfaces as [ObjectOptimisticLockingFailureException] and is absorbed here as a benign no-op (the other driver already advanced the order)
  */
-
 @Component // registers this class as a Spring-managed bean
 class OrderSaga(
     private val orders: OrderRepository,
@@ -56,7 +55,7 @@ class OrderSaga(
 
         // Stage 1 -> reserve the contended resource (skipped when resuming from RESERVED)
         if (order.status == OrderStatus.PENDING) {
-            val reservation = inventory.reserve(id, order.productId, order.qty)
+            val reservation = inventory.reserve(id, order.tripCode, order.qty)
             if (reservation.status == "REJECTED") {
                 stateMachine.reject(orderId, RejectionReason.SOLD_OUT)
                 return
@@ -69,7 +68,7 @@ class OrderSaga(
         when (authorization.status) {
             "DECLINED" -> {
                 // Business decline: compensation — give the seats back, then reject (the customer is told why)
-                inventory.release(id, order.productId)
+                inventory.release(id, order.tripCode)
                 stateMachine.reject(orderId, RejectionReason.PAYMENT_DECLINED)
                 return
             }
@@ -95,7 +94,7 @@ class OrderSaga(
         }
 
         // Stage 3 -> confirm the hold (guards the slow-payment-vs-TTL race, refinement #3): Inventory re-checks the hold is still valid; if it expired meanwhile we must NOT confirm a seat we no longer hold
-        val confirmation = inventory.confirm(id, order.productId)
+        val confirmation = inventory.confirm(id, order.tripCode)
         if (confirmation.status != "CONFIRMED") {
             // The hold lapsed before confirm, but payments.authorize already CHARGED on this pass. COMPENSATE: void the
             // charge before rejecting, so the saga invariant "no charge without a seat" holds (Fase 2 #4, decision #3). The

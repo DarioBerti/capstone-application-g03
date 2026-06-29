@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -25,6 +26,7 @@ import kotlin.test.assertTrue
     ],
 )
 @Tag("chaos-01") // anticipates chaos #1 (payments-latency): a saturated payments bulkhead leaves inventory permits intact
+@Import(TestcontainersConfiguration::class)
 class BulkheadIsolationTest {
 
     @Autowired private lateinit var bulkheads: BulkheadRegistry
