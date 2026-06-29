@@ -20,6 +20,64 @@
 
 ---
 
+## Episodio 2026‑06‑29 — Integrazione di `dev` (resilienza Fase 2/3) nel branch `database_refactor` via merge
+
+**Contesto.** La PR #3 (`database_refactor` → `dev`) era in conflitto: due linee di lavoro parallele avevano
+riscritto entrambe il money path. `dev` (12 commit, Fase 2/3) porta la resilienza (circuit breaker
+Orders→Payments + parcheggio `PAYMENT_PENDING` + recovery sweeper, bulkhead + retry, load‑shedding 429,
+compensazione `void` dell'hold scaduto, lock ottimistico `@Version`, logging strutturato ECS); il nostro
+branch porta refactor Postgres/Testcontainers, dominio Trip/Station + TripSeats (`productId → tripCode`),
+interfacce di servizio e auth Keycloak. Abbiamo chiesto a un agente di **integrare entrambe** (merge di
+`origin/dev`, niente scelte distruttive), prima delegando la mappatura a sottoagenti `Explore` in parallelo,
+poi risolvendo i 20 conflitti e rifacendo i file/test aggiunti da `dev`. Sono emersi **due** errori
+dell'agente, corretti prima del push.
+
+### Caso 1 — I sottoagenti `Explore` hanno sovrastimato i conflitti e **inventato** collisioni di migrazione 🟨 (analisi speculativa)
+- **Artefatto.** La "collision map" prodotta dai sottoagenti `Explore` lanciati in parallelo dichiarava: un
+  conflitto testuale **CRITICO** su `orders/V1__baseline.sql` (`product_id` vs `trip_code`), **collisioni di
+  numero di versione** fra le nostre migrazioni e quelle di `dev`, e che i test di `catalog`/`users` andavano
+  rifatti.
+- **Difetto.** Nulla di tutto ciò era vero. `dev` non ha **mai** ritoccato i baseline `V1` (ha solo
+  **aggiunto** `orders/V2__add_order_version.sql` e `inventory/V3__add_reservation_version.sql`): nessun
+  conflitto sul baseline, nessuna collisione di numero (le migrazioni sono additive e si impilano). E
+  `catalog`/`users`/`notifications` non sono toccati dai 12 commit di `dev`, quindi fanno auto‑merge per
+  intero. I sottoagenti hanno ragionato sulla **forma del diff** (`git diff base..dev`) invece che sul vero
+  merge a tre vie.
+- **Come l'abbiamo individuato.** Eseguendo `git merge-tree --write-tree origin/dev database_refactor`
+  **prima** di scegliere una strategia: ha restituito l'insieme reale e autorevole dei conflitti — esattamente
+  20 file confinati a `inventory`/`orders`/`payments`, **zero** conflitti di migrazione, `catalog`/`users`/
+  `notifications` puliti.
+- **Correzione.** Pianificato ed eseguito sull'insieme reale di `merge-tree`, non sulla mappa degli agenti. Le
+  migrazioni si sono impilate in modo additivo (il nostro `V1` + i `V2`/`V3` di `dev`) senza alcuna
+  riconciliazione manuale.
+- **Lezione.** L'"analisi di merge" di un agente è una speculazione sui diff; la risposta autorevole è uno
+  strumento — `git merge-tree` (un merge a secco). Eseguire prima il tool e fidarsi di **quello** più che del
+  racconto dell'agente, soprattutto sulle migrazioni, dove i sottoagenti hanno allarmato in eccesso.
+
+### Caso 2 — La risoluzione compilava e passava 37/38, ma un test era fragile rispetto all'ambiente 🟧 (osservabilità del money path)
+- **Artefatto.** La risoluzione del merge ha mantenuto `MetricCardinalityGuardTest` (di `dev`) così com'era: si
+  affida al fatto che la base‑url di Payments di default punti a una **porta morta**, così `payments.void()`
+  cade nel fallback `UNAVAILABLE`.
+- **Difetto.** Il nostro branch ha reso Payments un **resource server OAuth2**. Sulla macchina dello
+  sviluppatore girava una vera istanza di Payments sulla porta di default `8082`, che ha risposto alla sonda
+  **non autenticata** con **401** (un 4xx) → il gateway l'ha mappato a `FAILED`, non `UNAVAILABLE` → test
+  rosso. L'assunzione del test ("nessuno è in ascolto sulla porta di default") è rotta **proprio** dalla nostra
+  modifica di auth. Il codice compilava e 37/38 test di `orders` passavano; solo la suite completa l'ha fatto
+  emergere.
+- **Come l'abbiamo individuato.** `./gradlew test` sulla suite completa (89 test). Il report XML mostrava
+  `expected: <UNAVAILABLE> but was: <FAILED>`; `lsof` ha confermato un processo `java` locale su `8082` e
+  `curl` ha restituito `HTTP 401`.
+- **Correzione.** Fissata la base‑url di Payments a una porta sicuramente morta (`http://localhost:1`) nelle
+  `@SpringBootTest` properties del test (come già fa `PaymentsGatewayBreakerIntegrationTest`), rendendolo
+  deterministico a prescindere dai processi locali. Rieseguito **con i servizi locali ancora attivi** → verde
+  (38/38, totale 89/89).
+- **Lezione.** "Compila e quasi tutto verde" non basta: la suite completa su Testcontainers ha intercettato un
+  test con una dipendenza implicita dall'ambiente. Un test che assume "nessuno è in ascolto" diventa fragile
+  appena l'auth fa sì che una chiamata reale ma non autenticata risponda 4xx — fissare esplicitamente la
+  dipendenza esterna (porta morta dichiarata) invece di affidarsi all'assenza di processi locali.
+
+---
+
 ## Episodio 2026‑06‑29 — Riprogettazione del modello dati (Trip/Station, PK UUID, identità acquirente, void del pagamento)
 
 **Contesto.** Abbiamo chiesto a un agente di sostituire il modello piatto di Catalog
