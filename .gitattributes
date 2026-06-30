@@ -1,0 +1,13 @@
+# Keep line endings stable across operating systems.
+#
+# The Gradle wrapper and shell scripts are executed by /bin/sh — including inside the Linux build
+# containers — so they MUST be LF on every OS. Without this, a Windows checkout (autocrlf) gets them
+# in CRLF and the shebang breaks ("./gradlew: not found" during `docker build`). `eol=lf` forces LF
+# everywhere: Mac/Linux are unaffected (already LF), Windows checkouts stop getting CRLF. The committed
+# blobs are already LF, so no re-normalization of existing files is needed.
+*.sh        text eol=lf
+gradlew     text eol=lf
+
+# Windows batch scripts must stay CRLF.
+*.bat       text eol=crlf
+gradlew.bat text eol=crlf
