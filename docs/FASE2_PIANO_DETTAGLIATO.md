@@ -43,7 +43,7 @@ Il prof inquadra la resilienza così — tenerlo a mente in ogni scelta:
 
 ## 1. Circuit Breaker Orders→Payments + stato `PAYMENT_PENDING`  *(KEYSTONE)* — ✅ FATTO (2026-06-25)
 
-> **Stato: IMPLEMENTATO e testato** (20/20 test verdi nel servizio `orders`). Decorazione **programmatica** del breaker via `CircuitBreakerRegistry` (non l'annotazione AOP, rischio Boot 4 — vedi `docs/agent-log.md` #2/#7); fallback `PAYMENT_PENDING`; `OrderRecoverySweeper` con bounded-park money-safe; `@Version` + migration V2 contro eventi duplicati. Difetti del primo cut (4xx park-infinito, money-leak allargato, batch-abort, @Version non testato) trovati da review adversarial e corretti — vedi `agent-log.md` #7. Restano #2/#3/#4.
+> **Stato: IMPLEMENTATO e testato** (20/20 test verdi nel servizio `orders`). Decorazione **programmatica** del breaker via `CircuitBreakerRegistry` (non l'annotazione AOP — scelta deliberata: composizione esplicita + testabilità deterministica; le annotazioni ora fanno weave su Boot 4, vedi `docs/agent-log.md` #2/#7); fallback `PAYMENT_PENDING`; `OrderRecoverySweeper` con bounded-park money-safe; `@Version` + migration V2 contro eventi duplicati. Difetti del primo cut (4xx park-infinito, money-leak allargato, batch-abort, @Version non testato) trovati da review adversarial e corretti — vedi `agent-log.md` #7. Restano #2/#3/#4.
 
 Obiettivo: quando Payments è giù/lento, **contenere** il guasto (non propagarlo). L'ordine viene **parcheggiato** in `PAYMENT_PENDING` e ripreso quando il breaker richiude.
 
@@ -109,7 +109,7 @@ Obiettivo: quando Payments è giù/lento, **contenere** il guasto (non propagarl
 > SLO-bounded (più corti dei letterali 1s/2s/4s della slide, giustificato dal budget e2e — vedi `design.md` dec.7).
 > **Bulkhead** semaforo separato payments(8)/inventory(16), fail-fast; `BulkheadFullException` ignorata dal breaker.
 > Scope = **entrambi i gateway** (breaker resta solo Payments). NB: il testo sotto (#2.2/#2.4) cita le **annotazioni**
-> `@Retry`/`@Bulkhead` — scelta **superata** dalla decorazione programmatica di #1 (rischio AOP non-weave su Boot 4).
+> `@Retry`/`@Bulkhead` — scelta **superata** dalla decorazione programmatica di #1 (composizione esplicita `Retry(CircuitBreaker(Bulkhead))` + testabilità deterministica; non più per il rischio AOP su Boot 4).
 > Restano #3 (429) e #4 (refund/void).
 
 Obiettivo: ogni chiamata remota bounded, ritentata in modo sicuro, isolata per dominio di guasto.
@@ -155,14 +155,16 @@ Obiettivo: ogni chiamata remota bounded, ritentata in modo sicuro, isolata per d
 
 ## 3. Backpressure / Load shedding (HTTP 429) — ✅ FATTO (2026-06-26)
 
-> **Stato: IMPLEMENTATO e testato.** Rate limiter Resilience4j sull'edge `POST /api/orders`, applicato
-> **PROGRAMMATICAMENTE** via `RateLimiterRegistry` (mirror di `GatewayResilience`, stesso motivo Boot-4 AOP —
-> agent-log #2), in un nuovo componente `OrdersIntakeRateLimiter` (`withPermit{}`); oltre budget → shed:
-> counter `orders_intake_shed_total` + `IntakeOverloadedException` → mappata dal controller a **HTTP 429 +
-> `Retry-After`** (header derivato dalla finestra del limiter, mai un magic number). `timeout-duration: PT0S`
-> = rifiuto immediato, niente coda. Health indicator del limiter disabilitato (`management.health.ratelimiters.enabled:
-> false`) come per il breaker (#1.7): lo shedding è il sistema che funziona, non deve flippare la readiness.
-> Test funzionale via MockMvc (202 poi 429+Retry-After+counter, deterministico con budget 1/PT1M). Restano #4 (refund/void) e #5.
+> **Stato: IMPLEMENTATO e testato.** Rate limiter Resilience4j sull'edge `POST /api/orders`, applicato con
+> l'**annotazione `@RateLimiter(name="orders-intake")`** su `OrdersController.place()` (resilience4j 2.4.0 /
+> `resilience4j-spring-boot4` + `spring-boot-starter-aop` — le annotazioni ora fanno weave su Boot 4, agent-log #2);
+> oltre budget l'aspect lancia `RequestNotPermitted` **prima** del corpo del metodo (DB/outbox intatti), che
+> `GlobalExceptionHandler` mappa a **HTTP 429 + `Retry-After`** (header derivato dalla finestra del limiter, mai un
+> magic number) incrementando il counter `orders_intake_shed_total`. `timeout-duration: PT0S` = rifiuto immediato,
+> niente coda. Health indicator del limiter disabilitato (`management.health.ratelimiters.enabled: false`) come per
+> il breaker (#1.7): lo shedding è il sistema che funziona, non deve flippare la readiness. Test che guida il
+> controller proxato (202 poi `RequestNotPermitted` → 429+Retry-After+counter, deterministico con budget 1/PT1M):
+> prova che l'aspect fa davvero weave su Boot 4. Restano #4 (refund/void) e #5.
 
 Obiettivo: sotto sovraccarico, rifiutare lavoro in modo controllato invece di accodare fino al collasso.
 
@@ -346,7 +348,7 @@ Principio: *"You cannot make a system resilient without knowing it is failing"* 
 
 **7.1 — Una metrica per ogni policy** — ✅ FATTO
 - Cosa: esporre su `/actuator/prometheus`: `resilience4j_circuitbreaker_state{name="payments"}` e `_calls`, `resilience4j_retry_calls`, `resilience4j_bulkhead_available_concurrent_calls`, `orders_intake_shed_total`, `orders_compensations_total{type="refund"}`, `orders_payment_failures_total{outcome="unavailable"}`.
-- 🔁 `resilience4j-micrometer` già a classpath (`build.gradle.kts:48`) → i meter del breaker si registrano da soli. I counter custom seguono `meterRegistry.counter(...)`: `orders_placed_total` (`OrderService.kt:45`), `orders_compensations_total{type}` (`OrderSaga.kt:36`/`OrderRecoverySweeper.kt:66`), `orders_recovery_total{outcome}` (`OrderRecoverySweeper.kt:63`), `orders_intake_shed_total` (`OrdersIntakeRateLimiter.kt:25`), `orders_payment_failures_total{outcome}` (`Gateways.kt:118`), `payments_authorizations_total`/`payments_voids_total{outcome}`, `inventory_reservations_total{outcome}`.
+- 🔁 `resilience4j-micrometer` già a classpath (`build.gradle.kts:48`) → i meter del breaker si registrano da soli. I counter custom seguono `meterRegistry.counter(...)`: `orders_placed_total` (`OrderService.kt:45`), `orders_compensations_total{type}` (`OrderSaga.kt:36`/`OrderRecoverySweeper.kt:66`), `orders_recovery_total{outcome}` (`OrderRecoverySweeper.kt:63`), `orders_intake_shed_total` (`GlobalExceptionHandler.kt`), `orders_payment_failures_total{outcome}` (`Gateways.kt:118`), `payments_authorizations_total`/`payments_voids_total{outcome}`, `inventory_reservations_total{outcome}`.
 - ☑️ Ogni feature è visibile come serie temporale.
 - ⚠️ Nota coerenza (2026-06-28): il piano citava `orders_payments_unavailable_total`; il codice emette il più ricco `orders_payment_failures_total{outcome ∈ unavailable|client_error|bulkhead_full}` (`Gateways.kt:118`). Allineato il nome al codice (no rename: il counter è già usato dai test e l'outcome-tag copre i tre casi).
 

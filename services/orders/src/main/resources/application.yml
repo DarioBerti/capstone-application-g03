@@ -164,10 +164,10 @@ resilience4j:
       inventory:
         max-concurrent-calls: 16
         max-wait-duration: PT0S
-  # Backpressure / load shedding at the synchronous intake. The public POST /api/orders is rate-limited; once the per-window budget is exhausted the request is REFUSED IMMEDIATELY with HTTP 429 + Retry-After (see OrdersIntakeRateLimiter + OrdersController), instead of being queued until the system collapses.
-  # Applied PROGRAMMATICALLY via RateLimiterRegistry
-  # NB: the limit is on the EDGE only: internal saga calls are governed by breaker/bulkhead, never a 429 (#3.5).
-  # The threshold is a TEAM policy decision, tunable from a load-test baseline
+  # Backpressure / load shedding at the synchronous intake (@RateLimiter on OrdersController.place). Once the
+  # per-window budget is exhausted the public POST /api/orders is refused immediately with HTTP 429 + Retry-After
+  # instead of being queued until the system collapses. The 429 is EDGE-only: internal saga calls are governed by
+  # breaker/bulkhead, never a 429 (#3.5). The threshold is a TEAM policy decision, tunable from a load-test baseline.
   ratelimiter:
     instances:
       orders-intake:

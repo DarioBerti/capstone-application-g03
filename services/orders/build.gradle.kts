@@ -26,9 +26,10 @@ repositories {
 	mavenCentral()
 }
 
-// Resilience4j version is pinned explicitly: the published starter targets Spring Boot 3
-// Compatibility with Spring Boot 4 MUST be verified at first build (see docs/agent-log.md)
-val resilience4jVersion = "2.3.0"
+// Resilience4j version is pinned explicitly. The resilience4j-spring-boot4 starter is the Boot 4 line
+// (depends on Spring Boot 4 / Framework 7); its annotations (@RateLimiter, …) weave via the AspectJ starter
+// (Boot 4 renamed spring-boot-starter-aop -> spring-boot-starter-aspectj).
+val resilience4jVersion = "2.4.0"
 
 dependencies {
 	// Synchronous entry API (POST /api/orders) + JPA-owned Orders DB + transactional outbox
@@ -49,10 +50,12 @@ dependencies {
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
 
-	// Resilience (Pillar C): circuit breaker / retry / bulkhead / time limiter on Orders -> Payments|Inventory
-	implementation("io.github.resilience4j:resilience4j-spring-boot3:$resilience4jVersion")
+	// Resilience (Pillar C): circuit breaker / retry / bulkhead / time limiter on Orders -> Payments|Inventory,
+	// plus the @RateLimiter intake shed. The AspectJ starter weaves the resilience4j annotation aspects.
+	implementation("io.github.resilience4j:resilience4j-spring-boot4:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-kotlin:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-micrometer:$resilience4jVersion")
+	implementation("org.springframework.boot:spring-boot-starter-aspectj")
 
 	// Observability (Pillar D)
 	implementation("org.springframework.boot:spring-boot-starter-actuator")

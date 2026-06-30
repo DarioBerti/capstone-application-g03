@@ -1,5 +1,6 @@
 package it.g03.orders.controller
 
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter
 import it.g03.orders.dto.OrderResponse
 import it.g03.orders.dto.PlaceOrderRequest
 import it.g03.orders.dto.toResponse
@@ -31,27 +32,25 @@ import java.util.UUID
 @RequestMapping("/api/orders") // sets the base path for every endpoint defined in this controller
 class OrdersController(
     private val service: OrderService,
-    // Backpressure at the edge (Fase 2 #3): the intake is rate-limited; over budget we shed with 429
-    private val intake: OrdersIntakeRateLimiter,
 ) {
 
     // POST /api/orders -> places an order and returns 202 Accepted (the saga proceeds asynchronously).
-    // The whole intake is wrapped in the rate limiter: under budget it runs and returns 202; over budget "withPermit" throws IntakeOverloadedException BEFORE touching the DB/outbox -> mapped to 429 below (controlled refusal, not a queue)
-    // The 429 lives ONLY here at the edge: internal saga calls are governed by the circuit breaker / bulkhead, never by a 429 (Fase 2 #3.5)
+    // @RateLimiter sheds the intake: within the "orders-intake" budget the body runs and returns 202; over
+    // budget it throws RequestNotPermitted before the body runs (DB/outbox untouched) -> 429 via GlobalExceptionHandler.
+    @RateLimiter(name = "orders-intake")
     @PostMapping
     fun place(
         @RequestBody request: PlaceOrderRequest,
         @AuthenticationPrincipal jwt: Jwt,
         @RequestHeader(name = "Idempotency-Key", required = false) idempotencyKey: String?,
-    ): ResponseEntity<OrderResponse> =
-        intake.withPermit {
-            // Buyer identity comes from the validated token, not the client body (realm-import gotcha: guard a
-            // missing `sub` with a 400 instead of an NPE). `email` may be absent — that is fine, we snapshot null.
-            val buyerSub = jwt.subject ?: throw IllegalArgumentException("token is missing the subject (sub) claim")
-            val buyerEmail = jwt.getClaimAsString("email")
-            val order = service.placeOrder(request.tripCode, request.qty, buyerSub, buyerEmail, idempotencyKey)
-            ResponseEntity.status(HttpStatus.ACCEPTED).body(order.toResponse())
-        }
+    ): ResponseEntity<OrderResponse> {
+        // Buyer identity comes from the validated token, not the client body (realm-import gotcha: guard a
+        // missing `sub` with a 400 instead of an NPE). `email` may be absent — that is fine, we snapshot null.
+        val buyerSub = jwt.subject ?: throw IllegalArgumentException("token is missing the subject (sub) claim")
+        val buyerEmail = jwt.getClaimAsString("email")
+        val order = service.placeOrder(request.tripCode, request.qty, buyerSub, buyerEmail, idempotencyKey)
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(order.toResponse())
+    }
 
     // GET /api/orders/{orderId} -> looks up a single order by its id (lets clients observe the terminal state)
     @GetMapping("/{orderId}")

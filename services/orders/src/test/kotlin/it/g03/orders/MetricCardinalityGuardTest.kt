@@ -1,15 +1,15 @@
 package it.g03.orders
 
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry
+import io.github.resilience4j.ratelimiter.RequestNotPermitted
 import io.micrometer.core.instrument.MeterRegistry
-import it.g03.orders.controller.IntakeOverloadedException
-import it.g03.orders.controller.OrdersIntakeRateLimiter
+import it.g03.orders.controller.GlobalExceptionHandler
 import it.g03.orders.gateway.PaymentsGateway
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -47,7 +47,8 @@ import kotlin.test.assertTrue
 class MetricCardinalityGuardTest {
 
     @Autowired private lateinit var meterRegistry: MeterRegistry
-    @Autowired private lateinit var rateLimiter: OrdersIntakeRateLimiter
+    @Autowired private lateinit var rateLimiters: RateLimiterRegistry
+    @Autowired private lateinit var handler: GlobalExceptionHandler
     @Autowired private lateinit var payments: PaymentsGateway
 
     // The low-cardinality label vocabulary the team committed to (FASE2 §7.3). Anything else is a regression.
@@ -61,10 +62,13 @@ class MetricCardinalityGuardTest {
 
     @Test
     fun `every custom orders metric stays low-cardinality`() {
-        // 1) register orders_intake_shed_total via a real shed (2 permit budget -> 3rd call sheds)
-        rateLimiter.withPermit { }
-        rateLimiter.withPermit { }
-        assertFailsWith<IntakeOverloadedException> { rateLimiter.withPermit { } }
+        // 1) register orders_intake_shed_total via a real shed: exhaust the 2-permit budget, then map the
+        //    rejection through the handler (the same path a 429 takes), which increments the shed counter.
+        val limiter = rateLimiters.rateLimiter("orders-intake")
+        assertTrue(limiter.acquirePermission())
+        assertTrue(limiter.acquirePermission())
+        assertTrue(!limiter.acquirePermission(), "3rd call must be over the 2-permit budget")
+        handler.overloaded(RequestNotPermitted.createRequestNotPermitted(limiter))
 
         // 2) register orders_payment_failures_total{outcome} via a real gateway call to the dead default port
         val result = payments.void("guard-probe-order")
