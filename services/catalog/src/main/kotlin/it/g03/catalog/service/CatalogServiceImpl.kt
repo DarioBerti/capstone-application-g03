@@ -7,6 +7,7 @@ import it.g03.catalog.dto.toResponse
 import it.g03.catalog.entities.Trip
 import it.g03.catalog.repository.StationRepository
 import it.g03.catalog.repository.TripRepository
+import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.domain.Specification
@@ -26,10 +27,12 @@ class CatalogServiceImpl(
     private val trips: TripRepository,
     private val stations: StationRepository,
 ) : CatalogService {
+    private val log = LoggerFactory.getLogger(javaClass)
 
     // Paginated, filterable trip list. A null filter field adds no predicate (lists everything).
     @Transactional(readOnly = true)
     override fun search(filter: TripFilter, pageable: Pageable): Page<TripResponse> {
+        log.info("Searching for trips")
         val page = trips.findAll(filter.toSpecification(), pageable)
         val stationsByCode = resolveStations(page.content)
         return page.map { it.toTripResponse(stationsByCode) }
