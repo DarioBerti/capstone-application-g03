@@ -17,30 +17,56 @@ import org.springframework.beans.factory.DisposableBean
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
+import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Component
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Duration
 import java.time.Instant
 
 /**
- * The OUTBOX RELAY = the second half of the transactional-outbox pattern, implemented as a Kotlin **Flow** pipeline (Pillar A): a ticker Flow drives periodic drains inside a supervised CoroutineScope (the failure domain), cancelled cooperatively on SIGTERM
+ * OUTBOX RELAY — the background half of the transactional-outbox pattern (Pillar A).
  *
- * Delivery guarantee: AT-LEAST-ONCE. Mark-as-published happens only AFTER the broker ack (publish throws otherwise); a crash between send and mark causes a re-send, which consumers absorb because they are idempotent
- * On a failed send we STOP the batch (not skip): publishing the next event first would break per-order event ordering!
+ * THE PROBLEM IT SOLVES (the "dual-write" problem): when Orders accepts an order it must do two things —
+ * save the order row in its own database AND announce that order to the rest of the system over Kafka.
+ * Doing both directly is unsafe: if the process crashes in between (DB committed but Kafka send lost, or
+ * the reverse), the two stores disagree forever — an order with no event, or an event for an order that
+ * rolled back.
+ *
+ * THE FIX: the order-placing code never publishes to Kafka inline. Instead it writes the event as a row in
+ * the `outbox_events` table inside the SAME database transaction as the order, so the business change and
+ * its "still-to-be-published" event commit atomically — both, or neither.
+ *
+ * WHAT THIS CLASS DOES: it is the second half of that pattern — a background loop that periodically reads
+ * the not-yet-published rows out of `outbox_events`, does the actual Kafka publish, and marks each row
+ * published. It is built as a Kotlin Flow pipeline: a ticker Flow emits on a fixed interval, every tick runs
+ * one drain pass ([drainOnce]), and the whole thing lives in a supervised CoroutineScope that is cancelled
+ * cleanly on shutdown/SIGTERM (in-flight work finishes or is cancelled — never left orphaned).
+ *
+ * THE THREE GUARANTEES IT UPHOLDS:
+ *  - AT-LEAST-ONCE delivery: a row is marked published only AFTER the broker acknowledges the send, so a
+ *    crash in between re-sends the event on the next pass. Consumers are idempotent, so a duplicate is
+ *    harmless — we never risk losing an event (at-most-once).
+ *  - ORDERING preserved: if one send fails mid-batch we STOP the batch instead of skipping ahead, so two
+ *    events for the same order can never be published out of order.
+ *  - SAFE ACROSS REPLICAS: each drain claims its batch with FOR UPDATE SKIP LOCKED
+ *    ([OutboxEventRepository.lockUnpublishedBatch]) inside one transaction, so if two relay replicas run at
+ *    once the second one skips the locked rows rather than double-publishing them.
  */
 
-@Component // registers this class as a Spring-managed bean
+@Component
 class OutboxPublisher(
     private val outbox: OutboxEventRepository,
     private val events: EventPublisher,
+    transactionManager: PlatformTransactionManager,
     @Value("\${app.outbox.poll-interval}") private val pollInterval: Duration,
     @Value("\${app.outbox.enabled}") private val enabled: Boolean,
 ) : DisposableBean {
     private val log = LoggerFactory.getLogger(javaClass)
-    // Dispatchers.IO: each drain does BLOCKING work (JPA findTop50/save + the Kafka ack wait .get(5s)), which belongs on
-    // the elastic IO pool, not the CPU-bound Default pool (deck 06 blocking-vs-suspending). Matches OrderRecoverySweeper
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Cold ticker Flow: emits Unit every [pollInterval] until the scope is cancelled
+    private val transactionTemplate = TransactionTemplate(transactionManager)
+
     private fun ticker(interval: Duration) = flow {
         while (currentCoroutineContext().isActive) {
             delay(interval.toMillis())
@@ -48,9 +74,7 @@ class OutboxPublisher(
         }
     }
 
-    @EventListener(ApplicationReadyEvent::class) // runs once the app is fully started (skips the relay if disabled)
-    
-    // Launches the periodic drain loop on the supervised scope
+    @EventListener(ApplicationReadyEvent::class)
     fun start() {
         if (!enabled) {
             log.info("outbox relay disabled (app.outbox.enabled=false)")
@@ -59,8 +83,6 @@ class OutboxPublisher(
         log.info("outbox relay started (poll every {})", pollInterval)
         ticker(pollInterval)
             .onEach {
-                // Supervisor semantics: a failed drain logs and waits for the next tick
-                // The only suspension point (delay) is inside the ticker, so cooperative cancellation is never swallowed by this runCatching
                 runCatching { drainOnce() }
                     .onFailure { log.warn("outbox drain failed, will retry: {}", it.message) }
             }
@@ -68,10 +90,15 @@ class OutboxPublisher(
     }
 
     /**
-     * One drain pass; also called directly by tests. Returns how many events were published and marked
+     * One drain pass; also called directly by tests. Returns how many events were published and marked.
+     *
+     * The whole pass runs in ONE transaction: [OutboxEventRepository.lockUnpublishedBatch] takes a FOR UPDATE SKIP
+     * LOCKED lock on each returned row, so a second relay replica draining concurrently SKIPS those rows instead
+     * of re-publishing them (the fix for double-publish under >1 replica). Locks release on commit, by which point
+     * the rows are marked published. Still at-least-once: a crash after send but before commit re-sends the batch.
      */
-    fun drainOnce(): Int {
-        val batch = outbox.findTop50ByPublishedAtIsNullOrderByCreatedAtAsc()
+    fun drainOnce(): Int = transactionTemplate.execute { _ ->
+        val batch = outbox.lockUnpublishedBatch(PageRequest.of(0, BATCH_SIZE))
         var published = 0
         for (event in batch) {
             try {
@@ -86,12 +113,15 @@ class OutboxPublisher(
             published++
         }
         if (published > 0) log.debug("outbox relay published {} event(s)", published)
-        return published
-    }
+        published
+    } ?: 0
 
-    // DisposableBean hook: cooperatively cancels the relay scope on SIGTERM/shutdown
     override fun destroy() {
         log.info("cancelling outbox relay (cooperative shutdown)")
         scope.cancel()
+    }
+
+    private companion object {
+        const val BATCH_SIZE = 50
     }
 }

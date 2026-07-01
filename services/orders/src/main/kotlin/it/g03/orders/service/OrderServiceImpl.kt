@@ -41,8 +41,8 @@ class OrderServiceImpl(
         buyerEmail: String?,
         idempotencyKey: String?,
     ): Order {
-        require(tripCode.isNotBlank()) { "tripCode must not be blank" }
-        require(qty > 0) { "qty must be positive" }
+        // tripCode/qty are validated at the edge via Bean Validation on PlaceOrderRequest (@Valid). buyerSub
+        // is derived from the JWT (not a request-body field), so it stays a service-level precondition here.
         require(buyerSub.isNotBlank()) { "buyerSub must not be blank" }
 
         // Idempotent replay: a retried POST with the same key returns the existing order untouched.

@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Import
 	properties = [
 		"spring.kafka.bootstrap-servers=localhost:9092",
 		"events.publish.enabled=false",
+		"app.kafka-listeners-enabled=false",   // keep the command listeners off (no broker)
 	],
 )
 @Import(TestcontainersConfiguration::class)

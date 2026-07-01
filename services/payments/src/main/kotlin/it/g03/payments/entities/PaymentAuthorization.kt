@@ -17,9 +17,10 @@ import java.util.UUID
  * authorize either finds this row (replay → return the stored outcome) or loses the insert race and has its
  * transaction rolled back (same pattern as Inventory's reservation record).
  *
- * Lifecycle: AUTHORIZED (with psp_reference + captured_at) → VOIDED (voided_at) on saga compensation;
- * or DECLINED (with decline_reason) as a business outcome. Plain `class`, not `data class` — a JPA-managed
- * entity has identity, not value, semantics (root CLAUDE.md).
+ * Two-phase money path: AUTHORIZED is a HOLD (psp_reference, no captured_at) → CAPTURED (captured_at) when the
+ * funds are actually taken, or → VOIDED (voided_at) when the hold is released on saga compensation; DECLINED
+ * (with decline_reason) is a business outcome. Plain `class`, not `data class` — a JPA-managed entity has
+ * identity, not value, semantics (root CLAUDE.md).
  */
 @Entity
 @Table(
@@ -40,11 +41,11 @@ class PaymentAuthorization(
     @Column(nullable = false, length = 3)
     val currency: String = "EUR",
 
-    @Enumerated(EnumType.STRING)   // store enum by its name (AUTHORIZED/DECLINED/VOIDED), not its ordinal
+    @Enumerated(EnumType.STRING)   // store enum by its name (AUTHORIZED/DECLINED/CAPTURED/VOIDED), not its ordinal
     @Column(nullable = false, length = 16)
     var status: AuthorizationStatus = AuthorizationStatus.AUTHORIZED,
 
-    @Column(name = "psp_reference", length = 64)   // (mock) PSP auth code, set on AUTHORIZED
+    @Column(name = "psp_reference", length = 64)   // (mock) PSP auth code, set on AUTHORIZED (the hold)
     var pspReference: String? = null,
 
     @Column(name = "decline_reason", length = 64)  // why a DECLINED authorization was declined
@@ -53,7 +54,7 @@ class PaymentAuthorization(
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
 
-    @Column(name = "captured_at")   // when the charge was captured (auth+capture in this simplified model)
+    @Column(name = "captured_at")   // when the held funds were captured (the second phase); null while only AUTHORIZED
     var capturedAt: Instant? = null,
 
     @Column(name = "voided_at")     // when the charge was voided/refunded (saga compensation)
@@ -61,16 +62,24 @@ class PaymentAuthorization(
 )
 
 enum class AuthorizationStatus {
-    /** Terminal-until-voided: PSP authorized + captured the charge */
+    /** PSP authorized a HOLD on the funds (auth only). Not yet captured — capture is a separate command */
     AUTHORIZED,
 
     /** Terminal: PSP declined -> a BUSINESS outcome (a valid value), not a transport failure */
     DECLINED,
 
     /**
-     * Terminal: a previously AUTHORIZED charge was reversed (void) — the saga compensation when the inventory hold
-     * expired AFTER authorize (Pillar B/C, Fase 2 #4). Reached only from AUTHORIZED; re-voiding a VOIDED row is an
-     * idempotent replay. Fits the existing status VARCHAR(16) with no CHECK, so it needs no migration
+     * Terminal: the held funds were CAPTURED (the second phase, capture-last). Reached only from AUTHORIZED;
+     * re-capturing a CAPTURED row is an idempotent replay. Fits the existing status VARCHAR(16) with no CHECK,
+     * so it needs no migration (same reasoning as VOIDED below)
+     */
+    CAPTURED,
+
+    /**
+     * Terminal: a previously AUTHORIZED hold was released (cancelled) — the saga compensation when the inventory
+     * hold expired AFTER authorize (Pillar B/C). No money moved (the hold was never captured). Reached only from
+     * AUTHORIZED; re-cancelling a VOIDED row is an idempotent replay. Fits the existing status VARCHAR(16) with no
+     * CHECK, so it needs no migration
      */
     VOIDED,
 }

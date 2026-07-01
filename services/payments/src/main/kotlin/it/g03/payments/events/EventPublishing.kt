@@ -6,31 +6,31 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.kafka.core.KafkaTemplate
-import tools.jackson.databind.ObjectMapper
 import java.util.concurrent.TimeUnit
 
 /**
- * Outbound eventing port -> payment-authorized is an INFORMATIONAL event (observability / eventing requirement): the saga decision travels in the synchronous response to Orders, so losing 1 of these events can never corrupt the money path. That is why a simple after-commit publish is enough here, while Orders (whose events ARE load-bearing) uses the transactional outbox instead
+ * Raw publisher used by the outbox relay. Payments' replies are now LOAD-BEARING (Orders drives the saga off
+ * them), so — UNLIKE the old informational publisher — this one takes pre-serialised JSON (the outbox stores
+ * payloads already serialised inside the business transaction) and PROPAGATES failures: the relay must NOT
+ * mark an event as published if the send was not acked!
  */
 interface EventPublisher {
-    fun publish(topic: String, key: String, payload: Any)
+    /** Publish and wait for the broker ack (bounded); THROWS on failure. */
+    fun publish(topic: String, key: String, jsonPayload: String)
 }
 
 @Configuration   // marks this class as a source of Spring bean definitions
 class EventPublishingConfig {
 
-    /**
-     * Real Kafka publisher. Disabled with "events.publish.enabled=false" (used by tests, which have no broker: KafkaTemplate.send would block on metadata otherwise)
-     */
-    @Bean   // registers the returned object as a Spring-managed bean
+    // Real Kafka-backed publisher (active unless events.publish.enabled is explicitly false, as always)
+    @Bean   // exposes the returned object as a Spring-managed bean
     @ConditionalOnProperty(name = ["events.publish.enabled"], havingValue = "true", matchIfMissing = true)
-    fun kafkaEventPublisher(kafka: KafkaTemplate<String, String>, om: ObjectMapper): EventPublisher =
+    fun kafkaEventPublisher(kafka: KafkaTemplate<String, String>): EventPublisher =
         object : EventPublisher {
-            private val log = LoggerFactory.getLogger("it.g03.payments.KafkaEventPublisher")
-            override fun publish(topic: String, key: String, payload: Any) {
-                // Bounded wait (no unbounded hang, Pillar C); failures are logged, not propagated because informational events must never fail the business call
-                runCatching { kafka.send(topic, key, om.writeValueAsString(payload)).get(5, TimeUnit.SECONDS) }
-                    .onFailure { log.warn("failed to publish {} for key {}: {}", topic, key, it.message) }
+            override fun publish(topic: String, key: String, jsonPayload: String) {
+                // .get() = wait for the "acks=all" acknowledgement, bounded (no unbounded hang, Pillar C)
+                // Exceptions propagate to the relay, which stops the batch and retries on the next tick (at-least-once)
+                kafka.send(topic, key, jsonPayload).get(5, TimeUnit.SECONDS)
             }
         }
 
@@ -39,7 +39,7 @@ class EventPublishingConfig {
     @ConditionalOnMissingBean(EventPublisher::class)
     fun noopEventPublisher(): EventPublisher = object : EventPublisher {
         private val log = LoggerFactory.getLogger("it.g03.payments.NoopEventPublisher")
-        override fun publish(topic: String, key: String, payload: Any) {
+        override fun publish(topic: String, key: String, jsonPayload: String) {
             log.debug("event publishing disabled, dropping {} for key {}", topic, key)
         }
     }

@@ -3,6 +3,8 @@ package it.g03.orders.dto
 import it.g03.orders.entities.Order
 import it.g03.orders.entities.OrderStatus
 import it.g03.orders.entities.RejectionReason
+import jakarta.validation.constraints.NotBlank
+import jakarta.validation.constraints.Positive
 import java.util.UUID
 
 /**
@@ -11,7 +13,10 @@ import java.util.UUID
  */
 
 // Request body for placing an order (qty defaults to 1). The buyer identity comes from the JWT, not the body.
-data class PlaceOrderRequest(val tripCode: String, val qty: Int = 1)
+data class PlaceOrderRequest(
+    @field:NotBlank val tripCode: String,
+    @field:Positive val qty: Int = 1,
+)
 
 // Response body exposed to clients (a flattened, API-facing view of the Order entity).
 data class OrderResponse(

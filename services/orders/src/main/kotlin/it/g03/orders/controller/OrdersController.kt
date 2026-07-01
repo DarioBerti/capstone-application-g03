@@ -5,6 +5,7 @@ import it.g03.orders.dto.OrderResponse
 import it.g03.orders.dto.PlaceOrderRequest
 import it.g03.orders.dto.toResponse
 import it.g03.orders.service.OrderService
+import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -40,7 +41,7 @@ class OrdersController(
     @RateLimiter(name = "orders-intake")
     @PostMapping
     fun place(
-        @RequestBody request: PlaceOrderRequest,
+        @Valid @RequestBody request: PlaceOrderRequest,
         @AuthenticationPrincipal jwt: Jwt,
         @RequestHeader(name = "Idempotency-Key", required = false) idempotencyKey: String?,
     ): ResponseEntity<OrderResponse> {

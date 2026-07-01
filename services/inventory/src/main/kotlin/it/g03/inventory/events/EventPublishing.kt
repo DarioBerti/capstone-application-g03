@@ -6,69 +6,39 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.kafka.core.KafkaTemplate
-import tools.jackson.databind.ObjectMapper
-import java.time.Instant
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Outbound event publisher for informational events: "inventory-reserved" and "inventory-released".
- *
- * These events are for observability and notifications only. The main saga decision is returned
- * synchronously to Orders, so publishing these events can be "best-effort" after commit. Critical order
- * events use a transactional outbox instead.
+ * Raw publisher used by the outbox relay. Takes pre-serialised JSON (the outbox stores payloads already serialised inside
+ * the business transaction) and PROPAGATES failures: the relay must NOT mark an event as published if the send was not
+ * acked. This REPLACES the earlier best-effort informational publisher — the saga replies are load-bearing now, not telemetry.
  */
-
-// The port: the service depends on this abstraction, not on Kafka directly (swappable in tests)
 interface EventPublisher {
-    fun publish(topic: String, key: String, payload: Any)
+    /** Publish and wait for the broker ack (bounded); THROWS on failure. */
+    fun publish(topic: String, key: String, jsonPayload: String)
 }
 
-/** "inventory-reserved" event payload */
-data class InventoryReservedEvent(
-    val eventId: UUID = UUID.randomUUID(),
-    val orderId: String,
-    val tripCode: String,
-    val qty: Int,
-    val occurredAt: Instant = Instant.now(),
-)
-
-/** "inventory-released" event payload ("reason": released | expired) */
-data class InventoryReleasedEvent(
-    val eventId: UUID = UUID.randomUUID(),
-    val orderId: String,
-    val tripCode: String,
-    val qty: Int,
-    val reason: String,
-    val occurredAt: Instant = Instant.now(),
-)
-
-@Configuration  // declares Spring beans for event publishing
+@Configuration // declares this class as a source of Spring bean definitions
 class EventPublishingConfig {
 
-    /**
-     * Real Kafka publisher. Disabled with "events.publish.enabled=false" (used by tests, which have no broker:
-     * KafkaTemplate.send would block on metadata otherwise) [registered only when events.publish.enabled is
-     * true (the default), i.e. in real runs].
-     */
-    @Bean
-    @ConditionalOnProperty(name = ["events.publish.enabled"], havingValue = "true", matchIfMissing = true)
-    fun kafkaEventPublisher(kafka: KafkaTemplate<String, String>, om: ObjectMapper): EventPublisher =
+    // Real Kafka-backed publisher (active unless events.publish.enabled is explicitly false, as always)
+    @Bean // exposes the returned object as a Spring-managed bean
+    @ConditionalOnProperty(name = ["events.publish.enabled"], havingValue = "true", matchIfMissing = true) // only when publishing is enabled (default true)
+    fun kafkaEventPublisher(kafka: KafkaTemplate<String, String>): EventPublisher =
         object : EventPublisher {
-            private val log = LoggerFactory.getLogger("it.g03.inventory.KafkaEventPublisher")
-            override fun publish(topic: String, key: String, payload: Any) {
-                // Wait max 5s for Kafka; do not fail the business call on error
-                runCatching { kafka.send(topic, key, om.writeValueAsString(payload)).get(5, TimeUnit.SECONDS) }
-                    .onFailure { log.warn("failed to publish {} for key {}: {}", topic, key, it.message) }
+            override fun publish(topic: String, key: String, jsonPayload: String) {
+                // .get() = wait for the "acks=all" acknowledgement, bounded (no unbounded hang, Pillar C)
+                // Exceptions propagate to the relay, which stops the batch and retries on the next tick (at-least-once)
+                kafka.send(topic, key, jsonPayload).get(5, TimeUnit.SECONDS)
             }
         }
 
-    /** No-op fallback when publishing is disabled (tests / local runs) [registered only if no other EventPublisher exists]. */
+    /** No-op fallback when publishing is disabled (tests / broker-less local runs) [registered only if no other EventPublisher exists]. */
     @Bean
-    @ConditionalOnMissingBean(EventPublisher::class)
+    @ConditionalOnMissingBean(EventPublisher::class) // only when no other EventPublisher bean exists (es. Kafka one is off)
     fun noopEventPublisher(): EventPublisher = object : EventPublisher {
         private val log = LoggerFactory.getLogger("it.g03.inventory.NoopEventPublisher")
-        override fun publish(topic: String, key: String, payload: Any) {
+        override fun publish(topic: String, key: String, jsonPayload: String) {
             log.debug("event publishing disabled, dropping {} for key {}", topic, key)
         }
     }

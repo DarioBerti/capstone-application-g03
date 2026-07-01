@@ -52,12 +52,18 @@ export const api = {
       .then((page) => page.content),
 
   // The order references the trip by its business `code`; the buyer identity is taken from the bearer token.
-  placeOrder: (body: { tripCode: string; qty: number }): Promise<Order> =>
-    authedFetch('/api/orders', {
+  // `idempotencyKey` (client-minted, stable across retries of one checkout) rides in the Idempotency-Key
+  // header — NOT the body — so a retried/duplicate POST replays the same order instead of creating a second.
+  placeOrder: (body: { tripCode: string; qty: number; idempotencyKey?: string }): Promise<Order> => {
+    const { idempotencyKey, ...payload } = body
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
+    return authedFetch('/api/orders', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then((r) => json<Order>(r)),
+      headers,
+      body: JSON.stringify(payload),
+    }).then((r) => json<Order>(r))
+  },
 
   getOrder: (orderId: string): Promise<Order> =>
     authedFetch(`/api/orders/${orderId}`).then((r) => json<Order>(r)),

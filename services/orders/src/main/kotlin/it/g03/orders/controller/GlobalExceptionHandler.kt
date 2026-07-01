@@ -8,6 +8,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 
@@ -31,10 +32,18 @@ class GlobalExceptionHandler(
     fun notFound(e: NoSuchElementException): ResponseEntity<ErrorResponse> =
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse(e.message))
 
-    // An invalid request (blank tripCode / non-positive qty / missing sub) → 400 with a small JSON error body.
+    // A missing/malformed identity precondition (e.g. token missing the sub claim) → 400 with a small JSON error body.
     @ExceptionHandler(IllegalArgumentException::class)
     fun badRequest(e: IllegalArgumentException): ResponseEntity<ErrorResponse> =
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ErrorResponse(e.message))
+
+    // Bean Validation on the @Valid request body failed (blank tripCode / non-positive qty) → 400 with the
+    // field errors, keeping the same typed ErrorResponse envelope instead of Spring's default body.
+    @ExceptionHandler(MethodArgumentNotValidException::class)
+    fun invalidBody(e: MethodArgumentNotValidException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ErrorResponse(e.bindingResult.fieldErrors.joinToString(", ") { "${it.field}: ${it.defaultMessage}" }),
+        )
 
     /**
      * A concurrent POST that loses the UNIQUE(idempotency_key) race → 409 Conflict. The common sequential

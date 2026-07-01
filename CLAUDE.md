@@ -19,18 +19,22 @@ The team owns the judgments; agents only produce artifacts (see Agentic policy).
 |---|---|---|---|
 | `catalog` | Lists products/offers; read-mostly | Sync API, tolerant of staleness | shared (lower-tier) |
 | `orders` | Orchestrates the purchase workflow | Sync entry + async pipeline | dedicated CNPG |
-| `inventory` | Tracks finite seats — **the contended resource** | Sync reservation + async events | dedicated CNPG |
-| `payments` | Authorizes payment; **must not double-charge** | Sync call, strict idempotency | dedicated CNPG |
+| `inventory` | Tracks finite seats — **the contended resource** | Async Kafka commands/replies (reserve→confirm hold) | dedicated CNPG |
+| `payments` | Authorizes then captures payment; **must not double-charge** | Async Kafka commands/replies, strict idempotency | dedicated CNPG |
 | `notifications` | Sends confirmations | Fully async; **must fail without failing checkout** | none (stateless) |
 
 **The money path** (place order → reserve inventory → authorize payment → confirm) is the critical
 path. SLOs, dashboards, tracing, and chaos experiments all center on it.
 
 - North-south entry: a single API gateway/ingress (Traefik).
-- Sync APIs: client → gateway → Catalog/Orders, and Orders → Inventory/Payments (decisions made *now*).
-- Async: **Kafka (Strimzi operator)** for the order pipeline and all eventing. Topics in use:
-  `order-placed`, `order-confirmed`, `order-rejected`, `inventory-reserved`, `inventory-released`,
-  `payment-authorized`, `notification-requested`.
+- Sync APIs: client → gateway → Catalog/Orders (browsing + the `POST /api/orders` accept). The money path
+  itself is **fully async**: Orders drives Inventory/Payments over Kafka commands + replies, not HTTP.
+- Async: **Kafka (Strimzi operator)** for the order pipeline and all eventing. The saga is an orchestrated
+  command/reply pipeline (Orders = orchestrator). Topics in use: `order-placed` (trigger); commands
+  `reserve-seats`, `authorize-payment`, `confirm-seats`, `capture-payment`, `release-seats`,
+  `cancel-authorization`; replies `reservation-result`, `payment-result`, `seats-confirmed`,
+  `payment-captured`; terminal/notify `order-confirmed`, `order-rejected`, `notification-requested`; and a
+  dead-letter topic per consuming service (`orders-dlt`, `inventory-dlt`, `payments-dlt`).
 
 ## General rules
 - When editing or creating code files, do NOT add useless comments in any circumstance. The only comments which can be considered useful are the following:
@@ -51,6 +55,7 @@ path. SLOs, dashboards, tracing, and chaos experiments all center on it.
 - **PostgreSQL** everywhere (via CloudNativePG); **Flyway** owns the schema, Hibernate only validates.
 - Actuator + Micrometer Prometheus registry + Micrometer Tracing (OTel bridge) + OTLP exporter.
 - Async order pipeline uses **Kotlin coroutines / Flows** (Pillar A: correct cancellation/shutdown).
+- Use the AOP approach whenever possible.
 - **Kafka** via `spring-kafka` (idempotent producer, `acks=all`, manual offset commit / at-least-once).
 
 ## Repository layout
@@ -189,6 +194,13 @@ Never expose JPA entities directly. Define request/response `data class` DTOs in
 (`it.g03.<svc>.dto`) and map entity ↔ DTO explicitly with a top-level `toResponse()` mapper kept
 beside them (see `it.g03.catalog.dto` `Product.toResponse()` for the reference pattern).
 
+Validate request bodies at the edge with **Bean Validation**: annotate DTO fields
+(`jakarta.validation.constraints.*`, e.g. `@field:NotBlank`, `@field:Positive`) and add `@Valid` on the
+controller parameter — don't hand-roll `require()` checks in the service for request-body fields. The
+resulting `MethodArgumentNotValidException` is mapped to a 400 `ErrorResponse` in the service's
+`GlobalExceptionHandler`. (Reserve service-layer `require()` for preconditions that aren't request-body
+fields, e.g. identity derived from the JWT.)
+
 ### Paginated reads (standard for any endpoint returning table rows)
 Endpoints returning rows from a table **must be paginated and use Specifications** for filtering —
 never return an unbounded `List`. Target pattern:
@@ -317,12 +329,18 @@ in-cluster every value is supplied by the rendered Deployment env.
 
 ## Resilience (Pillar C)
 
-Contain partial failure; never propagate it. On cross-service sync calls:
-- **Circuit breakers** (e.g. Orders → Payments) with open/half-open policy and a safe fallback
-  (cached, degraded, queued, or an explicit error — never an unbounded hang).
-- **Timeouts + bounded retries with backoff + jitter** on every remote call. No retry storms.
-- **Bulkheads** (isolated resource pools) so a slow downstream can't exhaust shared threads/connections.
-- **Backpressure / load shedding** under overload (e.g. HTTP 429) rather than queuing to collapse.
+Contain partial failure; never propagate it. The money path is **async Kafka command/reply**, so its
+resilience comes from temporal decoupling rather than a synchronous circuit breaker:
+- **Kafka buffering** absorbs a downstream slowdown/outage as consumer lag, not blocked threads — the saga
+  resumes when the consumer recovers.
+- **Bounded, non-blocking consumer retry + a dead-letter topic** per service (`DefaultErrorHandler` +
+  `DeadLetterPublishingRecoverer`) so a poison/exhausted message is parked, never head-of-line-blocking.
+- **A timeout sweeper** re-drives a saga stuck in a non-terminal state past a deadline (idempotent commands
+  make re-drive safe); every saga reaches a terminal state in bounded time.
+- **Backpressure / load shedding** at the synchronous intake (`@RateLimiter` on `POST /api/orders` → HTTP
+  429) rather than queuing to collapse. The 429 is edge-only.
+- Any *remaining* cross-service sync call still gets timeouts + bounded retries (backoff + jitter) +
+  bulkheads + a circuit breaker with a safe fallback — never an unbounded hang.
 - Kubernetes-level: deliberate startup/readiness/liveness probes, PodDisruptionBudgets, topology spread.
 
 ## CI/CD & GitOps

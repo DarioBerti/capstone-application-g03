@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
         "events.publish.enabled=false",       // no broker in tests
         "app.kafka-listeners-enabled=false",  // no listener (no broker)
         "app.outbox.enabled=false",           // no relay racing the assertions
-        "app.recovery.enabled=false",         // no recovery sweep racing the assertions
+        "app.timeout-sweeper.enabled=false",  // no timeout sweeper racing the assertions
         // engage the in-cluster ECS console formatter here, profile-independent
         "logging.structured.format.console=ecs",
     ],

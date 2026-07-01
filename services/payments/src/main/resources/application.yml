@@ -31,7 +31,7 @@ spring:
     # ${VAR:default} = env var if set (in-cluster), localhost fallback for local dev
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     producer:
-      # acks=all + idempotent producer: durable, duplicate-free publishing of payment-authorized events (see inventory/orders application.yml for details)
+      # acks=all + idempotent producer: durable, duplicate-free publishing of the saga replies the outbox relay emits (see inventory/orders application.yml for details)
       acks: all
       properties:
         enable.idempotence: true
@@ -58,6 +58,12 @@ app:
   oidc:
     # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
+  outbox:
+    # Transactional-outbox relay: replies (payment-result / payment-captured) commit with the business change,
+    # then this background relay publishes the unpublished rows to Kafka. Disabled in tests (no broker).
+    enabled: ${OUTBOX_ENABLED:true}
+    # How often the relay drains the outbox (ISO-8601 duration); short for a snappy money path.
+    poll-interval: ${OUTBOX_POLL_INTERVAL:PT0.5S}
 
 # (mock) PSP decision rule: amounts at/above this threshold are DECLINED. Lets the demo exercise the saga
 # compensation path on demand (order a huge qty -> decline).
@@ -98,3 +104,12 @@ management:
     tracing:
       # local default collector endpoint; overridden in cluster deployment
       endpoint: http://localhost:4318/v1/traces
+
+# Kafka's client classes log their ENTIRE resolved config as a multi-hundred-line table at INFO on every
+# client init (ProducerConfig/ConsumerConfig/AdminClientConfig) — pure startup noise that buries real logs.
+# Silence just those loggers; genuine Kafka INFO (group rebalances, partition assignment) is kept.
+logging:
+  level:
+    org.apache.kafka.clients.producer.ProducerConfig: warn
+    org.apache.kafka.clients.consumer.ConsumerConfig: warn
+    org.apache.kafka.clients.admin.AdminClientConfig: warn
