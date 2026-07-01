@@ -178,7 +178,7 @@ Organize each service's source **by layer into folders whose names are the packa
 |---|---|---|
 | `controller/` | `it.g03.<svc>.controller` | REST controllers + the service's `GlobalExceptionHandler` (`@RestControllerAdvice`) |
 | `dto/` | `it.g03.<svc>.dto` | request/response DTOs, the `ErrorResponse` DTO, and entity↔DTO mappers (`toResponse()`) |
-| `service/` | `it.g03.<svc>.service` | business logic — each service as an `interface` (`XxxService`) + `@Service` impl (`XxxServiceImpl`); also saga, state machine, outbox relay, reconciler |
+| `service/` | `it.g03.<svc>.service` | business logic — each service as an `interface` (`XxxService`) + `@Service` impl (`XxxServiceImpl`); also saga, state machine, reconciler |
 | `repository/` | `it.g03.<svc>.repository` | Spring Data repositories — **one repository per file** |
 | `entities/` | `it.g03.<svc>.entities` | JPA entities (+ their tightly-bound enums) |
 | `events/` | `it.g03.<svc>.events` | Kafka listeners, publishers, `Topics`, event payloads |
@@ -224,10 +224,12 @@ fun list(filter: ProductFilter, pageable: Pageable): Page<ProductResponse> =
   Orders uses a **transactional outbox** so the business change and its event commit atomically.
 - **Inventory invariant: never oversell.** Reservation is an atomic conditional decrement; two
   customers cannot buy the last seat. Document the CAP/PACELC choice in `inventory`'s CLAUDE.md.
-- **Async lifecycle**: a `CoroutineScope` is a failure domain (use `SupervisorJob`); cancel
-  cooperatively on `SIGTERM`/shutdown via `DisposableBean` (in-flight work finishes or is cleanly
-  cancelled — no orphaned tasks, no double-processing). The outbox relay and inventory reconciler
-  follow this pattern.
+- **Async lifecycle**: when you *do* run background coroutines, a `CoroutineScope` is a failure domain
+  (use `SupervisorJob`) and must cancel cooperatively on `SIGTERM`/shutdown via `DisposableBean` (in-flight
+  work finishes or is cleanly cancelled — no orphaned tasks, no double-processing). But use coroutines/Flows
+  only where they genuinely earn it — suspending, cancellable async work such as the saga — and prefer
+  Spring's `@Scheduled` for simple blocking periodic polls (e.g. the orders timeout sweeper). Don't reach for
+  coroutines/Flows just to show them off.
 - **Notifications must degrade**: checkout succeeds even if notifications are entirely down.
 
 ## Database & profiles (Postgres everywhere, dev / prod for Kubernetes)
@@ -313,8 +315,8 @@ in-cluster every value is supplied by the rendered Deployment env.
 - JUnit 5 (`useJUnitPlatform`); backtick-quoted descriptive test names; AAA structure.
 - Prefer hand-written fakes over mocks. Test the **Service** layer for behaviour; slice-test controllers.
 - Concurrency/idempotency is first-class: see `inventory` `InventoryConcurrencyTest` (never-oversell
-  under contention) and `orders` `OutboxPublisherTest` (relay correctness).
-- Kafka listeners/publishing are disabled in tests via properties; relay/consumer logic is tested with fakes.
+  under contention) and `orders` `OrderVersionConcurrencyTest` (optimistic-locking idempotency).
+- Kafka listeners/publishing are disabled in tests via properties; consumer logic is tested with fakes (the outbox is drained externally by Debezium CDC).
 - `just verify <svc>` is the local Definition-of-Done gate (build + test + container + readiness).
 
 ## Observability (Pillar D)

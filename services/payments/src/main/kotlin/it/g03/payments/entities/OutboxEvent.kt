@@ -12,8 +12,8 @@ import java.util.UUID
  *
  * Writing to the database AND publishing to Kafka are two different systems: a crash in between either
  * loses the event or creates a ghost. So the reply is written HERE, in the SAME transaction as the business
- * change (the payment authorization row); a separate relay ([it.g03.payments.service.OutboxPublisher]) reads
- * unpublished rows and publishes them, marking publishedAt. Guarantee: at-least-once -> consumers must be
+ * change (the payment authorization row); Debezium CDC then reads the committed rows from the Postgres WAL
+ * (logical replication) and publishes them to Kafka. Guarantee: at-least-once -> consumers must be
  * idempotent (Orders' reply handlers are).
  *
  * Plain `class`, not `data class` — a JPA-managed entity has identity, not value, semantics (root CLAUDE.md).

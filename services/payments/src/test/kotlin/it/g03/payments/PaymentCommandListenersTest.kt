@@ -29,7 +29,6 @@ import kotlin.test.assertNull
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",   // we invoke the listeners directly, not via a container
-        "app.outbox.enabled=false",            // assert the appended rows ourselves; no relay draining
     ],
 )
 @Import(TestcontainersConfiguration::class)

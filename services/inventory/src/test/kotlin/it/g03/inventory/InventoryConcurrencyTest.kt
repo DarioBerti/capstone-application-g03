@@ -27,7 +27,7 @@ import kotlin.test.assertTrue
  * reproduces it under pod kill in the cluster. Runs on Testcontainers PostgreSQL — the race semantics that
  * matter only hold on a real database.
  */
-@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false", "app.kafka-listeners-enabled=false", "app.outbox.enabled=false", "inventory.reservation.enabled=false"])  // boot the full Spring app context; reconciler sweep + outbox relay OFF and listeners off so nothing races the seat-count assertions (#5.5)
+@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false", "app.kafka-listeners-enabled=false", "inventory.reservation.enabled=false"])  // boot the full Spring app context; reconciler sweep OFF and listeners off so nothing races the seat-count assertions (#5.5)
 @Import(TestcontainersConfiguration::class)
 @Tag("chaos-02") // anticipates chaos #2 (inventory-podkill): concurrent/redelivered ops never oversell, restock once
 class InventoryConcurrencyTest {

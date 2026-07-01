@@ -62,10 +62,6 @@ app:
   # Expected `iss` claim on inbound tokens; SecurityConfig rejects tokens from any other issuer.
   oidc:
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
-  # Transactional-outbox relay (see OutboxPublisher): tests set enabled=false
-  outbox:
-    enabled: true
-    poll-interval: PT0.5S
   # Timeout sweeper (OrderTimeoutSweeper): re-drives orders stuck in a non-terminal state past the deadline by
   # re-emitting the command for their current state (idempotent commands make a re-send safe). This is the
   # liveness backstop of the async saga; tests set enabled=false to avoid racing their assertions.

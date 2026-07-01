@@ -29,7 +29,6 @@ import kotlin.test.assertTrue
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
-        "app.outbox.enabled=false",
         "app.timeout-sweeper.enabled=false",
         // Shrink the intake budget so a shed is deterministic. NB: limit-for-period=2 (NOT 1) is deliberately
         // DISTINCT from OrdersIntakeRateLimiterTest's property set so Spring gives this class its OWN cached

@@ -27,7 +27,6 @@ import kotlin.test.assertTrue
         // no broker in tests: swap the Kafka publisher for the no-op one and keep listeners + relay off
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
-        "app.outbox.enabled=false",   // the relay must not drain rows under the assertions below
     ],
 )
 @Import(TestcontainersConfiguration::class)

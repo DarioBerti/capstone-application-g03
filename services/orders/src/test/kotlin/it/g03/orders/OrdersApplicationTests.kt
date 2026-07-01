@@ -14,7 +14,6 @@ import kotlin.test.assertTrue
 		"spring.kafka.bootstrap-servers=localhost:9092", // dummy broker address (no real connection is made)
 		"events.publish.enabled=false",                   // no broker in tests
 		"app.kafka-listeners-enabled=false",              // keep the listener off (no broker)
-		"app.outbox.enabled=false",                       // no background relay racing the assertions
 		"app.timeout-sweeper.enabled=false",              // no timeout sweeper racing the assertions
 	],
 )

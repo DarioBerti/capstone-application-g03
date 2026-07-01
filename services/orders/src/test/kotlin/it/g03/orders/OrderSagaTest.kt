@@ -29,7 +29,6 @@ import kotlin.test.assertTrue
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",      // no broker in tests
         "app.kafka-listeners-enabled=false", // saga is driven directly, not via Kafka
-        "app.outbox.enabled=false",          // no background relay racing the assertions
         "app.timeout-sweeper.enabled=false", // no timeout sweeper racing the assertions
     ],
 )

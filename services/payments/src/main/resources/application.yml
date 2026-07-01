@@ -58,12 +58,6 @@ app:
   oidc:
     # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
-  outbox:
-    # Transactional-outbox relay: replies (payment-result / payment-captured) commit with the business change,
-    # then this background relay publishes the unpublished rows to Kafka. Disabled in tests (no broker).
-    enabled: ${OUTBOX_ENABLED:true}
-    # How often the relay drains the outbox (ISO-8601 duration); short for a snappy money path.
-    poll-interval: ${OUTBOX_POLL_INTERVAL:PT0.5S}
 
 # (mock) PSP decision rule: amounts at/above this threshold are DECLINED. Lets the demo exercise the saga
 # compensation path on demand (order a huge qty -> decline).

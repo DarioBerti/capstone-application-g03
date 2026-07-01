@@ -12,8 +12,8 @@ import java.util.UUID
  *
  * Writing to the database AND publishing to Kafka are two different systems: a crash in between either
  * loses the event or creates a ghost. So the saga reply is written HERE, in the SAME transaction as the
- * business change (the reservation row); a separate relay ([it.g03.inventory.service.OutboxPublisher]) reads
- * unpublished rows and publishes them, marking publishedAt. Guarantee: at-least-once -> consumers must be idempotent.
+ * business change (the reservation row); Debezium CDC then reads the committed rows from the Postgres WAL
+ * (logical replication) and publishes them to Kafka. Guarantee: at-least-once -> consumers must be idempotent.
  *
  * Plain `class`, not `data class` — a JPA-managed entity has identity, not value, semantics (root CLAUDE.md).
  */

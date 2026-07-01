@@ -68,10 +68,6 @@ app:
   oidc:
     # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
-  # Transactional-outbox relay (see OutboxPublisher): publishes the saga replies to Kafka; tests set enabled=false
-  outbox:
-    enabled: true
-    poll-interval: PT0.5S
 
 # Reservation hold semantics: a RESERVED hold not confirmed/released within "ttl" is swept back to stock by the reconciler (every "sweep-interval"). ISO-8601 durations
 inventory:

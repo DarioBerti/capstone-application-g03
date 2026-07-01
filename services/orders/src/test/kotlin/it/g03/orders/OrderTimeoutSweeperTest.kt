@@ -29,7 +29,6 @@ import kotlin.test.assertTrue
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
-        "app.outbox.enabled=false",
         "app.timeout-sweeper.enabled=false", // we call sweepOnce() directly; no background loop racing the assertions
         "app.timeout-sweeper.deadline=PT30S",
     ],

@@ -24,7 +24,6 @@ import kotlin.test.assertEquals
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
-        "app.outbox.enabled=false",
         "app.timeout-sweeper.enabled=false",
     ],
 )

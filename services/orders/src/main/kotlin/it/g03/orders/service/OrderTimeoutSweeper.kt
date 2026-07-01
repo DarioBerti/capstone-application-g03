@@ -2,18 +2,9 @@ package it.g03.orders.service
 
 import it.g03.orders.entities.OrderStatus
 import it.g03.orders.repository.OrderRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.DisposableBean
 import org.springframework.beans.factory.annotation.Value
-import org.springframework.boot.context.event.ApplicationReadyEvent
-import org.springframework.context.event.EventListener
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
@@ -30,44 +21,27 @@ private val NON_TERMINAL = listOf(OrderStatus.PENDING, OrderStatus.RESERVED, Ord
  * AUTHORIZED -> confirm-seats). Commands are idempotent downstream, so a re-send is always safe; the re-drive
  * bumps `updatedAt` so the same order is not swept again on the next poll.
  *
- * Async lifecycle (same shape as the outbox relay / Inventory's reconciler):
- * - SupervisorJob scope: one failed sweep never stops the loop;
- * - per-order isolation: one failing order (e.g. the loser of a @Version race against an in-flight reply) does
- *   not skip the rest;
- * - cooperative shutdown: on SIGTERM Spring calls [destroy], scope.cancel() ends the loop at the next delay. An
- *   iteration already in flight finishes; since every re-drive commits independently and is idempotent, an
- *   abandoned iteration is safely resumed on restart;
- * - runs on Dispatchers.IO because [OrderStateMachine.redrive] does BLOCKING JPA work, which belongs on the
- *   elastic IO pool, not the CPU-bound Default pool (deck 06 blocking-vs-suspending).
- *
- * Gated by app.timeout-sweeper.enabled so tests (which drive the state machine directly) keep the loop OFF.
+ * Driven by Spring `@Scheduled` — a plain blocking DB poll, no coroutines needed. The task fires every
+ * `app.timeout-sweeper.poll-interval` and is gated by `app.timeout-sweeper.enabled` (tests set it false so the
+ * poll stays off while they drive the state machine directly). Resilience lives in the sweep body, not a
+ * coroutine scope: each order is re-driven in its own try/catch, so one failing order (e.g. the loser of a
+ * @Version race against an in-flight reply) never skips the rest; and each [OrderStateMachine.redrive] commits
+ * independently and is idempotent, so an order abandoned when the scheduler stops on shutdown is safely resumed
+ * on the next startup.
  */
-@Component // auto-detected by component scanning by Spring
+@Component
 class OrderTimeoutSweeper(
     private val orders: OrderRepository,
     private val stateMachine: OrderStateMachine,
     @Value("\${app.timeout-sweeper.enabled}") private val enabled: Boolean,
-    @Value("\${app.timeout-sweeper.poll-interval}") private val pollInterval: Duration,
     @Value("\${app.timeout-sweeper.deadline}") private val deadline: Duration,
-) : DisposableBean {
+) {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // starts the sweep loop once the app context is fully up (skips it entirely when disabled, e.g. in tests)
-    @EventListener(ApplicationReadyEvent::class)
-    fun start() {
-        if (!enabled) {
-            log.info("order timeout sweeper disabled (app.timeout-sweeper.enabled=false)")
-            return
-        }
-        scope.launch {
-            log.info("order timeout sweeper started (every {}, deadline {})", pollInterval, deadline)
-            while (isActive) {
-                // the only suspension point is this delay, OUTSIDE sweepOnce — cooperative-shutdown cancellation ends the loop here, never mid-order
-                delay(pollInterval.toMillis())
-                sweepOnce()
-            }
-        }
+    @Scheduled(fixedDelayString = "\${app.timeout-sweeper.poll-interval}")
+    fun sweep() {
+        if (!enabled) return
+        sweepOnce()
     }
 
     /**
@@ -92,11 +66,5 @@ class OrderTimeoutSweeper(
                 log.warn("re-drive of order {} failed, will retry next sweep: {}", order.id, e.message)
             }
         }
-    }
-
-    // Called by Spring on context shutdown (SIGTERM): cancels the scope for a clean, cooperative stop
-    override fun destroy() {
-        log.info("cancelling order timeout sweeper (cooperative shutdown)")
-        scope.cancel()
     }
 }
