@@ -5,15 +5,20 @@ import it.g03.payments.entities.PaymentAuthorization
 // Outcome of an authorize call; "replayed = true" means the idempotent replay path fired
 data class AuthorizeOutcome(val authorization: PaymentAuthorization, val replayed: Boolean)
 
-// Outcome of a void (reversal) call; "replayed = true" means no new reversal happened (already voided / nothing to reverse)
-data class VoidOutcome(val authorization: PaymentAuthorization, val replayed: Boolean)
+// Outcome of a capture call; "replayed = true" means no new capture happened (already captured / not capturable)
+data class CaptureOutcome(val authorization: PaymentAuthorization, val replayed: Boolean)
+
+// Outcome of a cancel-authorization (hold release) call; "replayed = true" means no new release happened
+data class CancelOutcome(val authorization: PaymentAuthorization, val replayed: Boolean)
 
 /**
- * Payments business-layer contract (Controller -> Service -> Repository). The controller depends on this
- * interface; [PaymentsServiceImpl] is the single implementation.
+ * Payments business-layer contract (Controller/Listener -> Service -> Repository). The two-phase money path is
+ * authorize (place a hold) -> capture (take the funds), with cancelAuthorization releasing an un-captured hold.
+ * [PaymentsServiceImpl] is the single implementation.
  */
 interface PaymentsService {
     fun authorize(orderId: String, amountCents: Long): AuthorizeOutcome
-    fun void(orderId: String): VoidOutcome
+    fun capture(orderId: String): CaptureOutcome
+    fun cancelAuthorization(orderId: String): CancelOutcome
     fun find(orderId: String): PaymentAuthorization
 }

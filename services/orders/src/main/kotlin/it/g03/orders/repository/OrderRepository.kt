@@ -5,6 +5,7 @@ import it.g03.orders.entities.OrderStatus
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import java.time.Instant
 import java.util.UUID
 
 // JpaRepository<Order, UUID> (the order id is a UUID). Spring Data generates the implementation at runtime.
@@ -16,6 +17,6 @@ interface OrderRepository : JpaRepository<Order, UUID> {
     /** "My orders": paginated history scoped to the authenticated buyer (indexed on buyer_sub). */
     fun findByBuyerSub(buyerSub: String, pageable: Pageable): Page<Order>
 
-    /** Recovery sweep ([OrderRecoverySweeper]): the orders parked in PAYMENT_PENDING by the circuit-breaker fallback, retried once Payments is reachable again. */
-    fun findByStatus(status: OrderStatus): List<Order>
+    /** Timeout sweep ([OrderTimeoutSweeper]): the orders stuck in a non-terminal state whose last update predates the deadline — re-driven (the command for their state is re-emitted). */
+    fun findByStatusInAndUpdatedAtBefore(statuses: Collection<OrderStatus>, cutoff: Instant): List<Order>
 }

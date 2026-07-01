@@ -9,8 +9,6 @@ import java.util.UUID
  * the controller returns these immutable value types and maps from the entity explicitly.
  */
 
-data class AuthorizeRequest(val orderId: String, val amountCents: Long)
-
 data class AuthorizationResponse(
     val authorizationId: UUID,
     val orderId: String,

@@ -2,9 +2,9 @@ package it.g03.inventory.service
 
 import it.g03.inventory.entities.Reservation
 import it.g03.inventory.entities.ReservationStatus
-import it.g03.inventory.events.EventPublisher
-import it.g03.inventory.events.InventoryReleasedEvent
-import it.g03.inventory.events.InventoryReservedEvent
+import it.g03.inventory.events.ReservationResultEvent
+import it.g03.inventory.events.SeatsConfirmedEvent
+import it.g03.inventory.events.Topics
 import it.g03.inventory.repository.ReservationRepository
 import it.g03.inventory.repository.TripSeatsRepository
 import io.micrometer.core.instrument.MeterRegistry
@@ -12,8 +12,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import org.springframework.transaction.support.TransactionSynchronization
-import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Duration
 import java.time.Instant
 
@@ -22,7 +20,7 @@ class InventoryServiceImpl(
 
     private val items: TripSeatsRepository,
     private val reservations: ReservationRepository,
-    private val events: EventPublisher,
+    private val outbox: Outbox,
     private val meterRegistry: MeterRegistry,
 
     // reads the reservation time-to-live from configuration and injects it as a Duration
@@ -38,22 +36,23 @@ class InventoryServiceImpl(
      * Idempotent atomic reservation -> dedup and decrement in the SAME transaction.
      *
      * Why this is duplicate-proof (chaos #2/#4, see docs/design.md):
-     * - Fast path: a previous attempt for (orderId, tripCode) exists → return its stored outcome (replay). A duplicated `order-placed` delivery is a no-op
+     * - Fast path: a previous attempt for (orderId, tripCode) exists → return its stored outcome (replay) and RE-EMIT the reply (at-least-once reply recovery). A duplicated `reserve-seats` delivery is a no-op on the seat count but still answers Orders
      * - Race path: two duplicates run concurrently, both miss the pre-check and both decrement. The UNIQUE(order_id, trip_code) insert then fails for exactly one of them, rolling back THAT transaction including its decrement: only one commit, one decrement. The thrown duplicate-key error is self-healing -> the at-least-once redelivery replays and hits the fast path
      * - Concurrency between DIFFERENT orders is decided by the conditional UPDATE (`available >= qty`): the row lock serialises them; the loser gets 0 rows = sold out
      */
-    @Transactional  // dedup + decrement + insert all commit (or roll back) as ONE atomic unit
+    @Transactional  // dedup + decrement + insert + reply all commit (or roll back) as ONE atomic unit
     override fun reserve(orderId: String, tripCode: String, qty: Int): ReserveOutcome {
         require(qty > 0) { "qty must be positive" }
 
-        // Fast path: a prior outcome for this (orderId, tripCode) exists -> replay it (idempotent)
+        // Fast path: a prior outcome for this (orderId, tripCode) exists -> replay it (idempotent) and re-emit the reply
         reservations.findByOrderIdAndTripCode(orderId, tripCode)?.let {
             outcomes("replayed").increment()
+            appendReservationResult(it)
             log.info("reserve replay for order={} trip={} -> {}", orderId, tripCode, it.status)
             return ReserveOutcome(it, replayed = true)
         }
 
-        // Reject unknown trips as a domain not-found (becomes a 404 at the controller)
+        // Reject unknown trips as a domain not-found (becomes a 404 at the controller / a DLT-bound poison message on the listener)
         if (!items.existsById(tripCode)) {
             throw NoSuchElementException("unknown trip: $tripCode")
         }
@@ -71,13 +70,7 @@ class InventoryServiceImpl(
                 expiresAt = Instant.now().plus(reservationTtl),
             ),
         )
-        if (reserved) {
-            publishAfterCommit(
-                "inventory-reserved",
-                orderId,
-                InventoryReservedEvent(orderId = orderId, tripCode = tripCode, qty = qty),
-            )
-        }
+        appendReservationResult(reservation)
         outcomes(if (reserved) "reserved" else "rejected").increment()
         log.info("reserve order={} trip={} qty={} -> {}", orderId, tripCode, qty, status)
         return ReserveOutcome(reservation, replayed = false)
@@ -86,10 +79,10 @@ class InventoryServiceImpl(
     /**
      * RESERVED → CONFIRMED. Guards the confirm-vs-expiry race (design refinement #3): if the TTL elapsed
      * before the (slow) payment came back, the hold is no longer valid — we expire it here (restocking the
-     * seats) and return EXPIRED so the caller (Orders) runs its compensation instead of confirming a seat we
-     * no longer hold. Idempotent: confirming a CONFIRMED reservation replays the stored outcome.
+     * seats) and reply EXPIRED so the caller (Orders) runs its compensation instead of confirming a seat we
+     * no longer hold. Idempotent: confirming a CONFIRMED reservation replays the stored outcome and re-emits the reply.
      */
-    @Transactional  // state transition (and any restock) commit atomically
+    @Transactional  // state transition, any restock, and the reply commit atomically
     override fun confirm(orderId: String, tripCode: String): Reservation {
         val r = reservations.findByOrderIdAndTripCode(orderId, tripCode)
             ?: throw NoSuchElementException("no reservation for order=$orderId trip=$tripCode")
@@ -99,7 +92,6 @@ class InventoryServiceImpl(
                 r.releasedAt = Instant.now()
                 reservations.save(r) // explicit save: restock() flushes+clears the context
                 items.restock(r.tripCode, r.qty)
-                publishReleasedAfterCommit(r, reason = "expired")
                 log.warn("confirm arrived after TTL for order={} -> EXPIRED (restocked)", orderId)
             } else {
                 r.status = ReservationStatus.CONFIRMED
@@ -107,11 +99,13 @@ class InventoryServiceImpl(
                 reservations.save(r)
             }
         }
+        appendSeatsConfirmed(r)
         return r
     }
 
     /**
-     * Saga compensation (payment failed/aborted): RESERVED → RELEASED + restock.
+     * Saga compensation (payment failed/aborted): RESERVED → RELEASED + restock. No reply — Orders is already
+     * rejecting when it sends release-seats, so it is not waiting on an answer.
      * Idempotent: releasing an already-terminal reservation replays the stored outcome.
      */
     @Transactional  // status flip + restock commit atomically
@@ -123,7 +117,6 @@ class InventoryServiceImpl(
             r.releasedAt = Instant.now()
             reservations.save(r) // explicit save: restock() flushes+clears the context
             items.restock(r.tripCode, r.qty)
-            publishReleasedAfterCommit(r, reason = "released")
             log.info("released reservation for order={} trip={} (restocked {})", orderId, tripCode, r.qty)
         }
         return r
@@ -131,7 +124,8 @@ class InventoryServiceImpl(
 
     /**
      * Reconciler sweep (invoked by [ReservationReconciler]): expire overdue holds and give the seats back,
-     * so a crashed/never-finished saga cannot strand inventory forever.
+     * so a crashed/never-finished saga cannot strand inventory forever. Restock only — no reply, since no order
+     * is waiting on a sweep (the saga's own timeout sweeper handles a stuck order).
      */
     @Transactional  // all sweep transitions and restocks commit atomically
     override fun expireOverdue(now: Instant): Int {
@@ -145,7 +139,6 @@ class InventoryServiceImpl(
         reservations.saveAll(overdue)
 
         overdue.forEach { items.restock(it.tripCode, it.qty) }
-        overdue.forEach { publishReleasedAfterCommit(it, reason = "expired") }
 
         if (overdue.isNotEmpty()) {
             outcomes("expired").increment()
@@ -153,30 +146,22 @@ class InventoryServiceImpl(
         return overdue.size
     }
 
-    // Re-read the (now-terminal) reservation after the controller lost an optimistic-lock race to the reconciler.
-    @Transactional(readOnly = true)
-    override fun find(orderId: String, tripCode: String): Reservation =
-        reservations.findByOrderIdAndTripCode(orderId, tripCode)
-            ?: throw NoSuchElementException("no reservation for order=$orderId trip=$tripCode")
+    // Reply to a reserve-seats command via the outbox (REJECTED -> SOLD_OUT, every other outcome means seats were held -> RESERVED)
+    private fun appendReservationResult(r: Reservation) {
+        val status = if (r.status == ReservationStatus.REJECTED) STATUS_SOLD_OUT else STATUS_RESERVED
+        outbox.append(Topics.RESERVATION_RESULT, r.orderId, ReservationResultEvent(orderId = r.orderId, status = status))
+    }
 
-    // Convenience wrapper: emit the inventory-released event for a reservation (released | expired)
-    private fun publishReleasedAfterCommit(r: Reservation, reason: String) =
-        publishAfterCommit(
-            "inventory-released",
-            r.orderId,
-            InventoryReleasedEvent(orderId = r.orderId, tripCode = r.tripCode, qty = r.qty, reason = reason),
-        )
+    // Reply to a confirm-seats command via the outbox (CONFIRMED -> seats sold, anything else means the hold lapsed -> EXPIRED)
+    private fun appendSeatsConfirmed(r: Reservation) {
+        val status = if (r.status == ReservationStatus.CONFIRMED) STATUS_CONFIRMED else STATUS_EXPIRED
+        outbox.append(Topics.SEATS_CONFIRMED, r.orderId, SeatsConfirmedEvent(orderId = r.orderId, status = status))
+    }
 
-    /**
-     * Publish only AFTER the surrounding transaction commits: publishing inside it could announce a state
-     * change that then rolls back (ghost event). Best-effort by design -> these events are informational
-     * (see EventPublishing.kt).
-     */
-    private fun publishAfterCommit(topic: String, key: String, payload: Any) {
-        TransactionSynchronizationManager.registerSynchronization(
-            object : TransactionSynchronization {
-                override fun afterCommit() = events.publish(topic, key, payload)
-            },
-        )
+    private companion object {
+        const val STATUS_RESERVED = "RESERVED"
+        const val STATUS_SOLD_OUT = "SOLD_OUT"
+        const val STATUS_CONFIRMED = "CONFIRMED"
+        const val STATUS_EXPIRED = "EXPIRED"
     }
 }

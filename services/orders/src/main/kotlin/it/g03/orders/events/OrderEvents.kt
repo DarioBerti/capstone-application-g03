@@ -9,6 +9,20 @@ object Topics {
     const val ORDER_CONFIRMED = "order-confirmed"         // emitted on the terminal happy path
     const val ORDER_REJECTED = "order-rejected"           // emitted on any terminal rejection
     const val NOTIFICATION_REQUESTED = "notification-requested" // tells the Notifications service to message the user
+
+    // Commands Orders PRODUCES (key = orderId) -> Inventory/Payments, appended to the outbox in the same tx as the state change
+    const val RESERVE_SEATS = "reserve-seats"             // -> Inventory: place a seat hold
+    const val AUTHORIZE_PAYMENT = "authorize-payment"     // -> Payments: hold funds (auth only, no capture)
+    const val CONFIRM_SEATS = "confirm-seats"             // -> Inventory: commit the hold
+    const val CAPTURE_PAYMENT = "capture-payment"         // -> Payments: capture the held funds (last step)
+    const val RELEASE_SEATS = "release-seats"             // -> Inventory: compensation on a DECLINED payment
+    const val CANCEL_AUTHORIZATION = "cancel-authorization" // -> Payments: compensation on an EXPIRED hold (release funds, no refund)
+
+    // Replies Orders CONSUMES from Inventory/Payments -> drive the saga edges
+    const val RESERVATION_RESULT = "reservation-result"   // <- Inventory: RESERVED | SOLD_OUT
+    const val PAYMENT_RESULT = "payment-result"           // <- Payments: AUTHORIZED | DECLINED
+    const val SEATS_CONFIRMED = "seats-confirmed"         // <- Inventory: CONFIRMED | EXPIRED
+    const val PAYMENT_CAPTURED = "payment-captured"       // <- Payments: funds captured
 }
 
 /**

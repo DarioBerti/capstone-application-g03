@@ -7,13 +7,13 @@ import java.time.Instant
 data class ReserveOutcome(val reservation: Reservation, val replayed: Boolean)
 
 /**
- * Inventory business-layer contract (Controller -> Service -> Repository). The controller and the
- * [ReservationReconciler] depend on this interface; [InventoryServiceImpl] is the single implementation.
+ * Inventory business-layer contract (Controller -> Service -> Repository). The command listeners and the
+ * [ReservationReconciler] depend on this interface; [InventoryServiceImpl] is the single implementation. Each
+ * command method appends its saga reply to the transactional outbox in the SAME transaction.
  */
 interface InventoryService {
     fun reserve(orderId: String, tripCode: String, qty: Int): ReserveOutcome
     fun confirm(orderId: String, tripCode: String): Reservation
     fun release(orderId: String, tripCode: String): Reservation
     fun expireOverdue(now: Instant): Int
-    fun find(orderId: String, tripCode: String): Reservation
 }

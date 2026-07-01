@@ -12,8 +12,8 @@ import java.util.UUID
  *
  * Writing to the database AND publishing to Kafka are two different systems: a crash in between either
  * loses the event or creates a ghost. So the event is written HERE, in the SAME transaction as the business
- * change (order row); a separate relay ([it.g03.orders.service.OutboxPublisher]) reads unpublished rows and
- * publishes them, marking publishedAt. Guarantee: at-least-once -> consumers must be idempotent.
+ * change (order row); Debezium CDC then reads the committed rows from the Postgres WAL (logical replication)
+ * and publishes them to Kafka. Guarantee: at-least-once -> consumers must be idempotent.
  *
  * Plain `class`, not `data class` — a JPA-managed entity has identity, not value, semantics (root CLAUDE.md).
  */
@@ -42,7 +42,7 @@ class OutboxEvent(
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
 
-    // null = not yet published; the relay sets it after a successful acked send
+    // Vestigial since the CDC cutover: the old in-app relay stamped this; Debezium tracks delivery via the WAL offset
     @Column(name = "published_at")
     var publishedAt: Instant? = null,
 )

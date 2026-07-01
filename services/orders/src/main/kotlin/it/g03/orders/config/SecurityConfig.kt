@@ -5,11 +5,6 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClientManager
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClientProviderBuilder
-import org.springframework.security.oauth2.client.AuthorizedClientServiceOAuth2AuthorizedClientManager
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService
-import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.jwt.JwtIssuerValidator
@@ -18,12 +13,12 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import org.springframework.security.web.SecurityFilterChain
 
 /**
- * Orders sits on both sides of auth:
- *  - INBOUND (resource server): the public POST /api/orders + GET /api/orders/{id} require a valid
- *    Keycloak user token (forwarded by the frontend). Actuator stays open for probes/scraping.
- *  - OUTBOUND (oauth2 client): the saga's calls to Inventory/Payments run on a Kafka listener thread
- *    where there is no user SecurityContext, so they carry a *service* token minted via client
- *    credentials (see ServiceTokenProvider + Gateways). The AuthorizedClientManager below issues it.
+ * Orders is an INBOUND resource server only: the public POST /api/orders + GET /api/orders/{id} require a
+ * valid Keycloak user token (forwarded by the frontend). Actuator stays open for probes/scraping.
+ *
+ * There is no longer any OUTBOUND oauth2-client wiring: the saga now drives Inventory/Payments over Kafka
+ * (commands + replies via the outbox), not authenticated HTTP, so the service token / AuthorizedClientManager
+ * are gone with the gateways.
  */
 @Configuration
 class SecurityConfig {
@@ -55,22 +50,5 @@ class SecurityConfig {
             DelegatingOAuth2TokenValidator(JwtValidators.createDefault(), JwtIssuerValidator(issuer)),
         )
         return decoder
-    }
-
-    /**
-     * Manager for OUTBOUND service tokens. The "service" variant (not the request-bound default) works off
-     * the HTTP request thread — essential because the saga runs on a Kafka consumer thread. It caches the
-     * token via the authorized-client service and refreshes it near expiry.
-     */
-    @Bean
-    fun authorizedClientManager(
-        clients: ClientRegistrationRepository,
-        authorizedClients: OAuth2AuthorizedClientService,
-    ): OAuth2AuthorizedClientManager {
-        val manager = AuthorizedClientServiceOAuth2AuthorizedClientManager(clients, authorizedClients)
-        manager.setAuthorizedClientProvider(
-            OAuth2AuthorizedClientProviderBuilder.builder().clientCredentials().build(),
-        )
-        return manager
     }
 }

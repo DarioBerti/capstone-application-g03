@@ -20,10 +20,10 @@ class OrderPlacedListener(
     private val objectMapper: ObjectMapper,
 ) {
     @KafkaListener(topics = [Topics.ORDER_PLACED], autoStartup = "\${app.kafka-listeners-enabled:true}") // consumes order-placed; offset commits only on a clean return (at-least-once)
-    
-    // Deserialises the event and hands the orderId to the saga
+
+    // Deserialises the event and starts the saga (emits reserve-seats)
     fun onOrderPlaced(payload: String) {
         val event = objectMapper.readValue(payload, OrderPlacedEvent::class.java)
-        saga.handle(UUID.fromString(event.orderId))
+        saga.start(UUID.fromString(event.orderId))
     }
 }

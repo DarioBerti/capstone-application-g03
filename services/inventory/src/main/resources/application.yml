@@ -113,3 +113,12 @@ management:
     tracing:
       # local default collector endpoint; overridden in cluster deployment
       endpoint: http://localhost:4318/v1/traces
+
+# Kafka's client classes log their ENTIRE resolved config as a multi-hundred-line table at INFO on every
+# client init (ProducerConfig/ConsumerConfig/AdminClientConfig) — pure startup noise that buries real logs.
+# Silence just those loggers; genuine Kafka INFO (group rebalances, partition assignment) is kept.
+logging:
+  level:
+    org.apache.kafka.clients.producer.ProducerConfig: warn
+    org.apache.kafka.clients.consumer.ConsumerConfig: warn
+    org.apache.kafka.clients.admin.AdminClientConfig: warn

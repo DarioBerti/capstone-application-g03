@@ -24,7 +24,7 @@ import kotlin.test.assertEquals
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
-        "app.outbox.enabled=false",
+        "app.timeout-sweeper.enabled=false",
     ],
 )
 @AutoConfigureMockMvc
@@ -64,6 +64,32 @@ class OrdersControllerTest {
         val order = orders.findAll().single()
         assertEquals("kc-sub-1", order.buyerSub)
         assertEquals("buyer@example.org", order.buyerEmail)
+    }
+
+    // Verifies Bean Validation at the edge: a non-positive qty is rejected with 400 and never creates an order.
+    @Test
+    fun `POST with a non-positive qty is rejected with 400`() {
+        mockMvc.perform(
+            post("/api/orders")
+                .with(jwt().jwt { it.subject("kc-sub-1") })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"tripCode":"FR9592-20260629","qty":0}"""),
+        ).andExpect(status().isBadRequest)
+
+        assertEquals(0, orders.count().toInt())
+    }
+
+    // Verifies Bean Validation at the edge: a blank tripCode is rejected with 400 and never creates an order.
+    @Test
+    fun `POST with a blank tripCode is rejected with 400`() {
+        mockMvc.perform(
+            post("/api/orders")
+                .with(jwt().jwt { it.subject("kc-sub-1") })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"tripCode":"  ","qty":1}"""),
+        ).andExpect(status().isBadRequest)
+
+        assertEquals(0, orders.count().toInt())
     }
 
     // Verifies idempotency at the HTTP edge: a retried POST with the same Idempotency-Key creates ONE order.

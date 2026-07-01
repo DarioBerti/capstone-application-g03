@@ -33,9 +33,10 @@ dependencies {
 	// Security: validate Keycloak-issued JWTs as an OAuth2 resource server (lazy JWKS, see application.yml)
 	implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
 
-	// Emits payment-authorized; coroutines for any async confirmation work. The starter pulls in
-	// spring-kafka AND Boot 4's Kafka auto-configuration (module spring-boot-kafka) that builds the
-	// KafkaTemplate bean — bare spring-kafka does not auto-configure it under Boot 4's modularized config.
+	// Consumes the saga commands (authorize/capture/cancel) and emits replies via the transactional outbox;
+	// coroutines drive the outbox relay (Pillar A). The starter pulls in spring-kafka AND Boot 4's Kafka
+	// auto-configuration (module spring-boot-kafka) that builds the KafkaTemplate bean — bare spring-kafka does
+	// not auto-configure it under Boot 4's modularized config.
 	implementation("org.springframework.boot:spring-boot-starter-kafka")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 

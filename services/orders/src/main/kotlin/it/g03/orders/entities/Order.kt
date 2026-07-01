@@ -12,21 +12,22 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * The saga aggregate. Order state machine (Pillar A/B/C):
+ * The saga aggregate. Reply-driven async Kafka state machine (Pillar A/B/C):
  *
- *   PENDING -- reserve ok --> RESERVED -- authorize ok + confirm ok --> CONFIRMED
- *      |                        |
- *      |-- reserve sold-out --> REJECTED(SOLD_OUT)
- *                               |-- authorize declined --> REJECTED(PAYMENT_DECLINED) (+release)
- *                               |-- authorize UNAVAILABLE (breaker open) --> PAYMENT_PENDING -- retry ok --> CONFIRMED
- *                               |-- hold expired before confirm --> REJECTED(RESERVATION_EXPIRED) (+void)
+ *   PENDING --reservation RESERVED--> RESERVED --payment AUTHORIZED--> AUTHORIZED --payment-captured--> CONFIRMED
+ *      |                                  |                                |
+ *      |-- reservation SOLD_OUT --> REJECTED(SOLD_OUT)                     |
+ *                                         |-- payment DECLINED --> REJECTED(PAYMENT_DECLINED) (+release-seats)
+ *                                                                          |-- seats EXPIRED --> REJECTED(RESERVATION_EXPIRED) (+cancel-authorization)
  *
- * PENDING/RESERVED/PAYMENT_PENDING are RESUMABLE states: an at-least-once redelivery of order-placed (or the
- * recovery sweep) re-enters the saga from where it crashed/parked (every downstream step is idempotent).
- * CONFIRMED/REJECTED are terminal: replays become no-ops.
- * PAYMENT_PENDING is the circuit-breaker fallback (Pillar C): Payments is unavailable, so the order is PARKED —
- * the seats stay held within their TTL — instead of rejecting a customer whose card may be fine;
- * [OrderRecoverySweeper] retries it once the breaker closes.
+ * Each edge is taken by a reply from Inventory/Payments; the order EMITS the next command (via the outbox) and
+ * waits. PENDING = "reserve-seats sent, awaiting reservation-result"; AUTHORIZED additionally covers
+ * "confirm-seats sent, awaiting seats-confirmed" then "capture-payment sent, awaiting payment-captured" — the
+ * capture-last design, so a hold that expires before confirm only cancels the funds hold (no capture, no refund).
+ *
+ * PENDING/RESERVED/AUTHORIZED are RESUMABLE states: a lost reply is re-driven by [OrderTimeoutSweeper], which
+ * re-emits the command for the current state (every command is idempotent downstream). CONFIRMED/REJECTED are
+ * terminal: a redelivered reply on a terminal/advanced order is a no-op (the per-transition status guard).
  *
  * Identity: surrogate `id` UUID (app-assigned, no shared sequence). `buyer_sub` records WHO placed the
  * order (the Keycloak subject); `buyer_email` is a snapshot of the buyer's email from the JWT at placement
@@ -79,14 +80,14 @@ class Order(
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Instant = Instant.now(),
 
-    // Optimistic-lock guard (Pillar C): the recovery sweep adds a SECOND saga driver alongside Kafka redelivery, so two handle() runs can race on the same order. @Version makes the loser of a concurrent terminal transition fail at commit (ObjectOptimisticLockingFailureException → rollback) instead of appending a duplicate order-confirmed/notification to the outbox. JPA manages the column; never set it by hand.
+    // Optimistic-lock guard (Pillar C): the timeout sweeper adds a SECOND saga driver alongside reply redelivery, so a re-drive and an in-flight reply can race on the same order. @Version makes the loser of a concurrent terminal transition fail at commit (ObjectOptimisticLockingFailureException → rollback) instead of appending a duplicate order-confirmed/notification to the outbox. JPA manages the column; never set it by hand.
     @Version
     @Column(nullable = false)
     var version: Long = 0,
 )
 
-// saga states: PENDING/RESERVED/PAYMENT_PENDING are resumable, CONFIRMED/REJECTED are terminal
-enum class OrderStatus { PENDING, RESERVED, PAYMENT_PENDING, CONFIRMED, REJECTED }
+// saga states: PENDING/RESERVED/AUTHORIZED are resumable, CONFIRMED/REJECTED are terminal
+enum class OrderStatus { PENDING, RESERVED, AUTHORIZED, CONFIRMED, REJECTED }
 
 // mutually-exclusive reasons an order can end up REJECTED
 enum class RejectionReason { SOLD_OUT, PAYMENT_DECLINED, RESERVATION_EXPIRED }

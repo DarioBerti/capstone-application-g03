@@ -28,7 +28,7 @@ import java.time.Instant
 class ReservationReconciler(
     private val service: InventoryService,
     @Value("\${inventory.reservation.sweep-interval}") private val sweepInterval: Duration,
-    // Property-gate (mirror of OrderRecoverySweeper.enabled / OutboxPublisher.enabled): lets @SpringBootTest turn the
+    // Property-gate (mirror of the orders timeout sweeper's enabled flag): lets @SpringBootTest turn the
     // background sweep OFF so it never races the assertions (Fase 2 #5.5). Default true in production
     @Value("\${inventory.reservation.enabled:true}") private val enabled: Boolean,
 ) : DisposableBean {

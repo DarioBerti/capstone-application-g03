@@ -27,21 +27,23 @@ repositories {
 }
 
 // Resilience4j version is pinned explicitly. The resilience4j-spring-boot4 starter is the Boot 4 line
-// (depends on Spring Boot 4 / Framework 7); its annotations (@RateLimiter, …) weave via the AspectJ starter
-// (Boot 4 renamed spring-boot-starter-aop -> spring-boot-starter-aspectj).
+// (depends on Spring Boot 4 / Framework 7); its sole remaining use here is the @RateLimiter intake shed,
+// whose annotation weaves via the AspectJ starter (Boot 4 renamed spring-boot-starter-aop -> spring-boot-starter-aspectj).
+// The Orders->Payments breaker/retry/bulkhead were retired when the money path went async (Kafka command/reply).
 val resilience4jVersion = "2.4.0"
 
 dependencies {
 	// Synchronous entry API (POST /api/orders) + JPA-owned Orders DB + transactional outbox
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
+	// Bean Validation (Hibernate Validator) so @Valid enforces the request-body constraints at the edge
+	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("tools.jackson.module:jackson-module-kotlin")
 
-	// Security: validate inbound Keycloak JWTs (resource server) AND mint a client-credentials service
-	// token for the outbound saga calls to Inventory/Payments (oauth2 client). See SecurityConfig + Gateways.
+	// Security: validate inbound Keycloak JWTs (resource server). No oauth2 CLIENT: the money path is async
+	// Kafka command/reply now, so Orders makes no authenticated outbound calls (the gateways are gone). See SecurityConfig.
 	implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
-	implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
 
 	// Asynchronous pipeline (Pillar A): Kafka eventing + Kotlin coroutines / Flows. The starter pulls in
 	// spring-kafka AND Boot 4's Kafka auto-configuration (module spring-boot-kafka) that builds the
@@ -50,8 +52,8 @@ dependencies {
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
 
-	// Resilience (Pillar C): circuit breaker / retry / bulkhead / time limiter on Orders -> Payments|Inventory,
-	// plus the @RateLimiter intake shed. The AspectJ starter weaves the resilience4j annotation aspects.
+	// Resilience (Pillar C): the @RateLimiter intake shed on POST /api/orders (the only resilience4j use left
+	// after the async cutover). The AspectJ starter weaves the @RateLimiter aspect on Boot 4.
 	implementation("io.github.resilience4j:resilience4j-spring-boot4:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-kotlin:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-micrometer:$resilience4jVersion")

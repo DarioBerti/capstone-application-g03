@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
 
 interface Props {
@@ -12,6 +12,17 @@ export default function OrderForm({ tripCode, onTripCode, onPlaced }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [accepted, setAccepted] = useState<string | null>(null)
+  // One idempotency key per checkout INTENT: minted for a given (tripCode, qty) and reused while those are
+  // unchanged, so a retry after a failure/timeout replays the same order (no duplicate). Changing the trip or
+  // quantity is a new intent -> a new key is minted; a successful placement clears it so the next order is fresh.
+  const idempotency = useRef<{ key: string; for: string } | null>(null)
+
+  const idempotencyKeyFor = (signature: string): string => {
+    if (idempotency.current?.for !== signature) {
+      idempotency.current = { key: crypto.randomUUID(), for: signature }
+    }
+    return idempotency.current.key
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -19,10 +30,13 @@ export default function OrderForm({ tripCode, onTripCode, onPlaced }: Props) {
     setError(null)
     setAccepted(null)
     try {
-      const order = await api.placeOrder({ tripCode, qty })
+      const idempotencyKey = idempotencyKeyFor(`${tripCode}#${qty}`)
+      const order = await api.placeOrder({ tripCode, qty, idempotencyKey })
+      idempotency.current = null // success: the next order is a new intent, mint a fresh key
       setAccepted(`202 Accepted · ${order.orderId} (${order.status})`)
       onPlaced(order.orderId)
     } catch (e) {
+      // keep the key: a re-submit of the same trip/qty is a retry, not a new order
       setError(String(e))
     } finally {
       setBusy(false)

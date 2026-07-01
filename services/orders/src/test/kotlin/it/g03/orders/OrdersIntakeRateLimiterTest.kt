@@ -33,8 +33,7 @@ import kotlin.test.assertTrue
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",       // no broker in tests
         "app.kafka-listeners-enabled=false",  // intake is driven via the controller, not Kafka
-        "app.outbox.enabled=false",           // no relay racing the assertions
-        "app.recovery.enabled=false",         // no recovery sweep racing the assertions
+        "app.timeout-sweeper.enabled=false",  // no timeout sweeper racing the assertions
         // shrink the intake budget so the 2nd call deterministically sheds (no timing dependency)
         "resilience4j.ratelimiter.instances.orders-intake.limit-for-period=1",
         "resilience4j.ratelimiter.instances.orders-intake.limit-refresh-period=PT1M",
