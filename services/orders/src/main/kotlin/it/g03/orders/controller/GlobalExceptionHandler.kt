@@ -1,5 +1,8 @@
 package it.g03.orders.controller
 
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry
+import io.github.resilience4j.ratelimiter.RequestNotPermitted
+import io.micrometer.core.instrument.MeterRegistry
 import it.g03.orders.dto.ErrorResponse
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpHeaders
@@ -13,7 +16,15 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
  * stay HTTP-only and the mapping isn't duplicated per controller.
  */
 @RestControllerAdvice
-class GlobalExceptionHandler {
+class GlobalExceptionHandler(
+    rateLimiters: RateLimiterRegistry,
+    meterRegistry: MeterRegistry,
+) {
+
+    private val intakeLimiter = rateLimiters.rateLimiter(INTAKE_LIMITER)
+
+    // Low-cardinality by design (no orderId/userId labels): one shed = one increment, visible as a time series.
+    private val shed = meterRegistry.counter("orders_intake_shed_total")
 
     // A missing order/resource → 404 with a small JSON error body.
     @ExceptionHandler(NoSuchElementException::class)
@@ -36,13 +47,26 @@ class GlobalExceptionHandler {
             .body(ErrorResponse("duplicate request in flight (idempotency key); retry to fetch the existing order"))
 
     /**
-     * Load shedding (Pillar C, Fase 2 #3): the intake is over its rate budget → 429 Too Many Requests + the
-     * standard Retry-After header (seconds, derived from the limiter window). Controlled refusal, not a 5xx:
-     * the client is told to come back and the money path is protected.
+     * The intake @RateLimiter rejected the request (over the per-window budget) → 429 Too Many Requests +
+     * Retry-After, and the shed is counted. Controlled refusal, not a 5xx: the client is told when to retry
+     * and the money path is protected.
      */
-    @ExceptionHandler(IntakeOverloadedException::class)
-    fun overloaded(e: IntakeOverloadedException): ResponseEntity<ErrorResponse> =
-        ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-            .header(HttpHeaders.RETRY_AFTER, e.retryAfterSeconds.toString())
+    @ExceptionHandler(RequestNotPermitted::class)
+    fun overloaded(e: RequestNotPermitted): ResponseEntity<ErrorResponse> {
+        shed.increment()
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, retryAfterSeconds().toString())
             .body(ErrorResponse("orders intake overloaded, retry later"))
+    }
+
+    // Retry-After hint derived from the configured limiter window (not a magic number), so a client that waits
+    // this long finds the budget refreshed. Rounded up, min 1s.
+    private fun retryAfterSeconds(): Long {
+        val windowMillis = intakeLimiter.rateLimiterConfig.limitRefreshPeriod.toMillis()
+        return maxOf(1L, (windowMillis + 999) / 1000)
+    }
+
+    companion object {
+        const val INTAKE_LIMITER = "orders-intake"
+    }
 }
