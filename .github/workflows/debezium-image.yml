@@ -1,0 +1,46 @@
+# Builds + pushes the Debezium Kafka Connect image (Dockerfile in the CONFIG repo, platform/debezium/).
+# Lives in THIS repo because the ACR push credentials are repo secrets HERE (same ones the service builds
+# use) — the config repo deliberately holds no credentials. Manual trigger: the image changes only when the
+# Dockerfile (Strimzi/Kafka/Debezium pins) changes, not on every app commit.
+#
+#   gh workflow run debezium-image.yml [-f tag=1.0.0]
+name: debezium-connect image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (must match platform/debezium/kafka-connect.yaml spec.image)"
+        required: false
+        default: "1.0.0"
+
+env:
+  REGISTRY: labg03clusterregistry.azurecr.io
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      # the Dockerfile lives in the config repo; CONFIG_REPO_PAT (the same PAT the tag-bump uses) can read it
+      - name: Checkout config repo
+        uses: actions/checkout@v4
+        with:
+          repository: DarioBerti/capstone-configuration-g03
+          token: ${{ secrets.CONFIG_REPO_PAT }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: platform/debezium
+          push: true
+          tags: ${{ env.REGISTRY }}/eurotransit/debezium-connect:${{ inputs.tag }}
