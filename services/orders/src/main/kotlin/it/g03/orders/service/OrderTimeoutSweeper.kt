@@ -1,5 +1,7 @@
 package it.g03.orders.service
 
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.MeterRegistry
 import it.g03.orders.entities.OrderStatus
 import it.g03.orders.repository.OrderRepository
 import org.slf4j.LoggerFactory
@@ -8,6 +10,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 
 // the resumable saga states; a terminal order is never swept
 private val NON_TERMINAL = listOf(OrderStatus.PENDING, OrderStatus.RESERVED, OrderStatus.AUTHORIZED)
@@ -33,10 +36,22 @@ private val NON_TERMINAL = listOf(OrderStatus.PENDING, OrderStatus.RESERVED, Ord
 class OrderTimeoutSweeper(
     private val orders: OrderRepository,
     private val stateMachine: OrderStateMachine,
+    meterRegistry: MeterRegistry,
     @Value("\${app.timeout-sweeper.enabled}") private val enabled: Boolean,
     @Value("\${app.timeout-sweeper.deadline}") private val deadline: Duration,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    // Saga-completion SLI: stuck orders found by the LAST sweep. Non-zero sustained = re-driving is not
+    // resolving them (something on the money path is down) — the paged symptom even at zero traffic,
+    // where the terminal-ratio SLI is NaN.
+    private val overdue = AtomicInteger(0)
+
+    init {
+        Gauge.builder("orders_overdue_nonterminal", overdue) { it.get().toDouble() }
+            .description("Non-terminal orders past the saga deadline found by the last sweep")
+            .register(meterRegistry)
+    }
 
     @Scheduled(fixedDelayString = "\${app.timeout-sweeper.poll-interval}")
     fun sweep() {
@@ -57,6 +72,7 @@ class OrderTimeoutSweeper(
             log.warn("order timeout sweep query failed, will retry: {}", e.message)
             return
         }
+        overdue.set(stuck.size)
         if (stuck.isEmpty()) return
         log.info("re-driving {} stuck order(s) older than the {} deadline", stuck.size, deadline)
         for (order in stuck) {

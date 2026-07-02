@@ -187,6 +187,33 @@ corretti prima del merge.
 
 ---
 
+## Episodio 2026‑07‑02 — Le dipendenze di tracing erano INERTI: mancava il modulo di auto‑config di Boot 4
+
+- **Contesto.** Fase 4, tracing cross‑Kafka. Tutti i servizi dichiaravano da settimane
+  `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp` e configuravano
+  `management.tracing.sampling.probability: 1.0` e `management.otlp.tracing.endpoint` — e la roadmap diceva
+  "pipeline provata, le app devono esportare gli span". Il primo tentativo (di un agente) di wiring si era
+  fermato lì, dando per scontato che deps+properties bastassero.
+- **Errore.** In **Spring Boot 4** l'auto‑configurazione del tracing non vive più in
+  `spring-boot-actuator-autoconfigure` (com'era in Boot 3) ma nel modulo dedicato
+  **`spring-boot-micrometer-tracing-opentelemetry`** (che tira `spring-boot-micrometer-tracing` +
+  `spring-boot-opentelemetry`). Senza quel modulo **nessun bean `Tracer`/`Propagator`/exporter OTLP viene
+  creato**: dipendenze e properties erano un no‑op silenzioso — zero span esportati, MDC senza
+  traceId/spanId, e nessun errore da nessuna parte.
+- **Come l'abbiamo scoperto.** Un test nuovo (`SagaCompletionMetricsTest`) che inietta `Tracer` è fallito con
+  `No qualifying bean of type 'io.micrometer.tracing.Tracer'`; l'ispezione del classpath
+  (`gradlew dependencies`) ha mostrato che NESSUN modulo boot di tracing era presente — quindi il problema non
+  era "i test disabilitano il tracing", era che il tracing non esisteva neanche in produzione.
+- **Correzione.** Aggiunto `org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry` a tutti e
+  sei i servizi (le properties esistenti restano valide: il modulo supporta ancora gli alias
+  `management.otlp.tracing.*`). Verificato con la suite completa (`just test-all`, 6/6 verdi) e con il test
+  che asserisce il `traceparent` W3C persistito nella riga di outbox.
+- **Lezione.** "Dipendenza sul classpath + property configurata" NON implica "funzionalità attiva": i major
+  upgrade spostano le auto‑configurazioni. La prova deve essere **positiva** (un bean iniettato, uno span
+  visibile), mai l'assenza di errori.
+
+---
+
 ## Come lavoriamo con l'agente (processo, non solo i ritrovamenti)
 
 - **La build non è negoziabile.** Ogni modifica dell'agente passa per `just test <svc>` su Testcontainers

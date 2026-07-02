@@ -12,6 +12,9 @@ spring:
       auto-offset-reset: earliest
       # manual commit (at-least-once): a duplicated notification e-mail is an acceptable failure mode, a LOST confirmation is not!
       enable-auto-commit: false
+    # Fase 4 cross-Kafka tracing: continue the W3C trace carried by the Debezium-produced `traceparent` header
+    listener:
+      observation-enabled: true
 
 server:
   # Default local HTTP port

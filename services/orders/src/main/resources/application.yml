@@ -44,6 +44,13 @@ spring:
       auto-offset-reset: earliest
       # Manual ack: we commit the offset only after the handler has durably processed the event, so an at-least-once redelivery is safe (consumers are idempotent)
       enable-auto-commit: false
+    # Fase 4 cross-Kafka tracing: the listener observation extracts the W3C `traceparent` header that
+    # Debezium copies from the outbox row, so the consumer span CONTINUES the producer's trace instead of
+    # starting a fresh one; template observation covers the few direct sends (the DLT recoverer).
+    listener:
+      observation-enabled: true
+    template:
+      observation-enabled: true
   security:
     oauth2:
       resourceserver:

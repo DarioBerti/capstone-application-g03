@@ -13,6 +13,7 @@ import it.g03.orders.events.OrderRejectedEvent
 import it.g03.orders.events.ReleaseSeatsCommand
 import it.g03.orders.events.ReserveSeatsCommand
 import it.g03.orders.events.Topics
+import io.micrometer.core.instrument.MeterRegistry
 import it.g03.orders.repository.OrderRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -41,6 +42,7 @@ import java.util.UUID
 class OrderStateMachine(
     private val orders: OrderRepository,
     private val outbox: Outbox,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -146,6 +148,8 @@ class OrderStateMachine(
         if (order.status != OrderStatus.AUTHORIZED) return // idempotent: only the AUTHORIZED -> CONFIRMED edge fires
         order.status = OrderStatus.CONFIRMED
         touch(order)
+        // Saga-completion SLI numerator (with orders_rejected_total): terminal ratio vs orders_placed_total
+        meterRegistry.counter("orders_confirmed_total").increment()
         val id = order.idStr()
         outbox.append(Topics.ORDER_CONFIRMED, id, OrderConfirmedEvent(orderId = id))
         outbox.append(
@@ -164,6 +168,9 @@ class OrderStateMachine(
         order.status = OrderStatus.REJECTED
         order.rejectionReason = reason
         touch(order)
+        // Rejection IS saga completion (the user got an answer): counted in the terminal ratio, split by
+        // reason for the business panel. `reason` is a 3-value enum — low-cardinality by construction.
+        meterRegistry.counter("orders_rejected_total", "reason", reason.name).increment()
         val id = order.idStr()
         outbox.append(Topics.ORDER_REJECTED, id, OrderRejectedEvent(orderId = id, reason = reason.name))
         outbox.append(

@@ -35,6 +35,9 @@ dependencies {
 	implementation("io.micrometer:micrometer-registry-prometheus")
 	implementation("io.micrometer:micrometer-tracing-bridge-otel")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+	// Boot 4 split tracing auto-config out of actuator into its own module: without it NO Tracer/OTLP
+	// exporter bean is created and the two tracing deps above are inert (spans silently never exported).
+	implementation("org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry")
 
 	// Schema migrations: Flyway owns the schema, Hibernate validates. The starter pulls in Flyway core
 	// AND Spring Boot 4's Flyway auto-configuration (in module spring-boot-flyway) that actually runs
