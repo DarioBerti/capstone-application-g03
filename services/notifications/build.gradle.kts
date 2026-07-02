@@ -36,6 +36,9 @@ dependencies {
 	implementation("io.micrometer:micrometer-registry-prometheus")
 	implementation("io.micrometer:micrometer-tracing-bridge-otel")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+	// Boot 4 split tracing auto-config out of actuator into its own module: without it NO Tracer/OTLP
+	// exporter bean is created and the two tracing deps above are inert (spans silently never exported).
+	implementation("org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.kafka:spring-kafka-test")

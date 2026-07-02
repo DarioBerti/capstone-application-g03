@@ -40,6 +40,12 @@ spring:
       auto-offset-reset: earliest
       # Manual ack -> at-least-once delivery -> handlers must be idempotent (idempotency table is this service's core design constraint)
       enable-auto-commit: false
+    # Fase 4 cross-Kafka tracing: continue the W3C trace carried by the Debezium-produced `traceparent`
+    # header (listener); template observation covers the few direct sends (the DLT recoverer).
+    listener:
+      observation-enabled: true
+    template:
+      observation-enabled: true
   security:
     oauth2:
       resourceserver:
