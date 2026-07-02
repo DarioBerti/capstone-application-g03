@@ -24,6 +24,12 @@ management:
 # trace.id/span.id — the log<->trace correlation that answers "why" on the money path. Local dev (base
 # profile, no cluster) keeps the human-readable console.
 logging:
+  # When the platform forces plaintext (kind, no log-aggregation stack — LOGGING_STRUCTURED_FORMAT_CONSOLE
+  # outranks the `ecs` below), this trimmed console pattern applies: Spring's default minus the PID (always
+  # 1 in a container) and the application name (the pod name already identifies the service). Keeps the
+  # traceId/spanId correlation so log<->trace still works. Ignored when ecs JSON is active (real cluster).
+  pattern:
+    console: "%clr(%d{${LOG_DATEFORMAT_PATTERN:-yyyy-MM-dd'T'HH:mm:ss.SSSXXX}}){faint} %clr(${LOG_LEVEL_PATTERN:-%5p}) %clr([%15.15t]){faint} %clr(${LOG_CORRELATION_PATTERN:-}){faint}%clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}"
   structured:
     format:
       console: ecs

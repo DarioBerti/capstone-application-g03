@@ -5,10 +5,11 @@ import it.g03.payments.entities.PaymentAuthorization
 import it.g03.payments.events.PaymentCapturedEvent
 import it.g03.payments.events.PaymentResultEvent
 import it.g03.payments.events.Topics
+import it.g03.payments.gateway.AuthorizationResult
+import it.g03.payments.gateway.PaymentGateway
 import it.g03.payments.repository.PaymentAuthorizationRepository
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
@@ -18,10 +19,7 @@ class PaymentsServiceImpl(
     private val authorizations: PaymentAuthorizationRepository,
     private val outbox: Outbox,
     private val meterRegistry: MeterRegistry,
-    /**
-     * (mock) PSP decision rule, deliberately deterministic and demo-controllable: amounts >= this threshold are DECLINED ("insufficient funds"); lets us exercise the saga compensation path (release reservation) on demand: order a huge qty → decline
-     */
-    @Value("\${payments.decline-threshold-cents:100000}") private val declineThresholdCents: Long,   // injects configured threshold (with a default debug value here) from the env/config
+    private val gateway: PaymentGateway,
 ) : PaymentsService {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -61,25 +59,26 @@ class PaymentsServiceImpl(
             return AuthorizeOutcome(it, replayed = true)
         }
 
-        // We do not call a real payment provider here. Instead, a simple fixed rule decides the result:
-        // amounts above the threshold are declined, smaller amounts are approved. This places a HOLD only
-        // (no capture) — capture is a separate command. The demo stays predictable; chaos/latency tests add
-        // failures at the network level.
-        val authorized = amountCents < declineThresholdCents
-        val auth = PaymentAuthorization(
-            orderId = orderId,
-            amountCents = amountCents,
-            status = if (authorized) AuthorizationStatus.AUTHORIZED else AuthorizationStatus.DECLINED,
-        )
-        if (authorized) {
-            auth.pspReference = "AUTH-${auth.id}"   // (mock) PSP authorization code for the hold
-        } else {
-            auth.declineReason = "AMOUNT_OVER_THRESHOLD"
+        // Delegate the PSP decision to the configured gateway (PayPal sandbox, or the deterministic mock in
+        // dev/tests). This places a HOLD only (no capture) — capture is a separate command. A DECLINE is a
+        // business outcome; a transient transport failure throws (TransientPspException) so this transaction
+        // rolls back and the Kafka retry/DLT/sweeper path re-drives.
+        val auth = PaymentAuthorization(orderId = orderId, amountCents = amountCents)
+        when (val result = gateway.authorize(orderId, amountCents, auth.currency)) {
+            is AuthorizationResult.Authorized -> {
+                auth.status = AuthorizationStatus.AUTHORIZED
+                auth.pspReference = result.pspReference
+            }
+            is AuthorizationResult.Declined -> {
+                auth.status = AuthorizationStatus.DECLINED
+                auth.declineReason = result.reason
+            }
         }
 
         val saved = authorizations.save(auth)
         appendPaymentResult(orderId, resultStatus(saved))
-        outcomes(if (authorized) "authorized" else "declined").increment()
+        val approved = saved.status != AuthorizationStatus.DECLINED
+        outcomes(if (approved) "authorized" else "declined").increment()
         log.info("authorize order={} amountCents={} -> {} (hold)", orderId, amountCents, saved.status)
         return AuthorizeOutcome(saved, replayed = false)
     }
@@ -96,8 +95,13 @@ class PaymentsServiceImpl(
             ?: throw NoSuchElementException("no authorization for order=$orderId")
         return when (auth.status) {
             AuthorizationStatus.AUTHORIZED -> {
+                val pspRef = requireNotNull(auth.pspReference) {
+                    "AUTHORIZED hold for order=$orderId has no pspReference to capture"
+                }
+                val result = gateway.capture(orderId, pspRef)
                 auth.status = AuthorizationStatus.CAPTURED
                 auth.capturedAt = Instant.now()
+                auth.captureReference = result.captureReference
                 val captured = authorizations.save(auth)
                 appendPaymentCaptured(orderId)
                 captureOutcomes("captured").increment()
@@ -131,6 +135,10 @@ class PaymentsServiceImpl(
             ?: throw NoSuchElementException("no authorization for order=$orderId")
         return when (auth.status) {
             AuthorizationStatus.AUTHORIZED -> {
+                val pspRef = requireNotNull(auth.pspReference) {
+                    "AUTHORIZED hold for order=$orderId has no pspReference to void"
+                }
+                gateway.void(orderId, pspRef)
                 auth.status = AuthorizationStatus.VOIDED
                 auth.voidedAt = Instant.now()
                 val voided = authorizations.save(auth)
