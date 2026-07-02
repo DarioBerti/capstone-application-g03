@@ -205,6 +205,23 @@ e pubblica sui topic. **Niente relay applicativo a polling** — la lettura del 
 in `../capstone-configuration-g03/docs/design.md §4-A`). Recoverability: un servizio che crasha riprende leggendo i topic
 (at-least-once + handler idempotenti).
 
+### 5-bis. Tracing cross-Kafka + SLI di completamento (Fase 4)
+Il produttore degli eventi è **Debezium, non la `KafkaTemplate`** → l'instrumentazione in-process del producer non può
+propagare nulla. Soluzione: `Outbox.append` cattura il contesto **W3C `traceparent`** dello span corrente (via
+`Tracer`/`Propagator` di Micrometer) e lo persiste come **colonna della riga di outbox, nella stessa transazione**;
+l'Outbox Event Router di Debezium lo mappa a **header Kafka** e i consumer lo continuano con
+`spring.kafka.listener.observation-enabled: true` (in yml, insieme a `template.observation-enabled` per i publish
+diretti del DLT recoverer). `traceparent` NULL (es. re-drive dello sweeper, nessuno span attivo) ⇒ il consumer apre una
+traccia nuova — mai inventare un contesto. **Quirk Boot 4 scoperto qui**: l'auto-config del tracing non vive più
+nell'actuator ma nel modulo dedicato `spring-boot-micrometer-tracing-opentelemetry` — senza quello, `Tracer` non esiste
+e le due dipendenze micrometer/otel erano **inerti** (zero span esportati; v. `docs/agent-log.md`).
+
+Metriche di completamento saga (la SLI che il 202 non può vedere): `orders_confirmed_total` e
+`orders_rejected_total{reason}` incrementati **nelle transizioni terminali** di `OrderStateMachine` (una rejection è una
+saga COMPLETATA: SOLD_OUT/DECLINED non sono guasti), più il gauge `orders_overdue_nonterminal` alimentato da ogni sweep
+di `OrderTimeoutSweeper` (ordini oltre deadline = sintomo diretto di stallo, anche a traffico zero). L'alert è sul
+**terminal-ratio** e sul gauge, mai sul confirmed-ratio (regola in `../capstone-configuration-g03/docs/design.md §4-D`).
+
 ## 6. Resilienza nel codice (Pilastro C)
 Col cutover async, i pattern **sincroni** Orders→Payments (circuit breaker / bulkhead / retry) sono stati **ritirati**
 (non c'è più chiamata sync). La resilienza vive ora così:
