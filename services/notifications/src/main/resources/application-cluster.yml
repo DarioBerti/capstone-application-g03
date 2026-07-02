@@ -1,0 +1,9 @@
+# Cluster overlay — activate with SPRING_PROFILES_ACTIVE=cluster.
+# Notifications is stateless (no DB), so it has nothing to harden for the cluster except logging: the
+# console emits ECS JSON so the platform's log pipeline parses fields, and micrometer-tracing's
+# traceId/spanId (already in MDC) surface as trace.id/span.id — the log<->trace correlation that answers
+# "why". Local dev (base profile, no cluster) keeps the human-readable console.
+logging:
+  structured:
+    format:
+      console: ecs

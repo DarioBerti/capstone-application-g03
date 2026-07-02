@@ -26,16 +26,24 @@ repositories {
 	mavenCentral()
 }
 
-// Resilience4j version is pinned explicitly: the published starter targets Spring Boot 3
-// Compatibility with Spring Boot 4 MUST be verified at first build (see docs/agent-log.md)
-val resilience4jVersion = "2.3.0"
+// Resilience4j version is pinned explicitly. The resilience4j-spring-boot4 starter is the Boot 4 line
+// (depends on Spring Boot 4 / Framework 7); its sole remaining use here is the @RateLimiter intake shed,
+// whose annotation weaves via the AspectJ starter (Boot 4 renamed spring-boot-starter-aop -> spring-boot-starter-aspectj).
+// The Orders->Payments breaker/retry/bulkhead were retired when the money path went async (Kafka command/reply).
+val resilience4jVersion = "2.4.0"
 
 dependencies {
 	// Synchronous entry API (POST /api/orders) + JPA-owned Orders DB + transactional outbox
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
+	// Bean Validation (Hibernate Validator) so @Valid enforces the request-body constraints at the edge
+	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("tools.jackson.module:jackson-module-kotlin")
+
+	// Security: validate inbound Keycloak JWTs (resource server). No oauth2 CLIENT: the money path is async
+	// Kafka command/reply now, so Orders makes no authenticated outbound calls (the gateways are gone). See SecurityConfig.
+	implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
 
 	// Asynchronous pipeline (Pillar A): Kafka eventing + Kotlin coroutines / Flows. The starter pulls in
 	// spring-kafka AND Boot 4's Kafka auto-configuration (module spring-boot-kafka) that builds the
@@ -44,32 +52,44 @@ dependencies {
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
 
-	// Resilience (Pillar C): circuit breaker / retry / bulkhead / time limiter on Orders -> Payments|Inventory
-	implementation("io.github.resilience4j:resilience4j-spring-boot3:$resilience4jVersion")
+	// Resilience (Pillar C): the @RateLimiter intake shed on POST /api/orders (the only resilience4j use left
+	// after the async cutover). The AspectJ starter weaves the @RateLimiter aspect on Boot 4.
+	implementation("io.github.resilience4j:resilience4j-spring-boot4:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-kotlin:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-micrometer:$resilience4jVersion")
+	implementation("org.springframework.boot:spring-boot-starter-aspectj")
 
 	// Observability (Pillar D)
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("io.micrometer:micrometer-registry-prometheus")
 	implementation("io.micrometer:micrometer-tracing-bridge-otel")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+	// Boot 4 split tracing auto-config out of actuator into its own module: without it NO Tracer/OTLP
+	// exporter bean is created and the two tracing deps above are inert (spans silently never exported).
+	implementation("org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry")
 
-	// Schema migrations (postgres profile only): Flyway owns the schema, Hibernate validates. The starter
+	// Schema migrations (cluster profile only): Flyway owns the schema, Hibernate validates. The starter
 	// pulls in Flyway core AND Spring Boot 4's Flyway auto-configuration (module spring-boot-flyway) that
 	// actually runs migrations on startup — bare flyway-core does not auto-migrate under Boot 4's modules.
 	implementation("org.springframework.boot:spring-boot-starter-flyway")
 	runtimeOnly("org.flywaydb:flyway-database-postgresql")
 
 	runtimeOnly("org.postgresql:postgresql")
-	runtimeOnly("com.h2database:h2")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.springframework.kafka:spring-kafka-test")
+	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// Tests run against a real PostgreSQL via Testcontainers (no H2) — versions from the Spring Boot BOM.
+	// The money-path schema (UNIQUE(idempotency_key), CHECKs, transactional outbox) is only exercised
+	// faithfully on real Postgres + Flyway, not on H2 with ddl-auto.
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:testcontainers-postgresql")
+	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
 }
 
 kotlin {

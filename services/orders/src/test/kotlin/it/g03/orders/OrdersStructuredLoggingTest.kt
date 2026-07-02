@@ -5,6 +5,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
 import tools.jackson.databind.json.JsonMapper
@@ -22,21 +23,21 @@ import kotlin.test.assertTrue
  * is config-dependent — and therefore the part worth a build-breaking test — is that the active structured
  * formatter actually EMITS those MDC fields into the JSON. So the test seeds the MDC exactly as the bridge would
  * and asserts the formatter carries the value through. `logging.structured.format.console=ecs` is set inline so the
- * test exercises the SAME native formatter `application-postgres.yml` turns on in-cluster, profile-independently
- * (orders tests boot on H2, no `postgres` profile needed). No `logback-spring.xml`, no extra dependency.
+ * test exercises the SAME native formatter `application-cluster.yml` turns on in-cluster, profile-independently
+ * (orders tests boot on Testcontainers Postgres, no `cluster` profile needed). No `logback-spring.xml`, no extra dependency.
  */
 @SpringBootTest(
     properties = [
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",       // no broker in tests
         "app.kafka-listeners-enabled=false",  // no listener (no broker)
-        "app.outbox.enabled=false",           // no relay racing the assertions
-        "app.recovery.enabled=false",         // no recovery sweep racing the assertions
+        "app.timeout-sweeper.enabled=false",  // no timeout sweeper racing the assertions
         // engage the in-cluster ECS console formatter here, profile-independent
         "logging.structured.format.console=ecs",
     ],
 )
 @ExtendWith(OutputCaptureExtension::class)
+@Import(TestcontainersConfiguration::class)
 class OrdersStructuredLoggingTest {
 
     private val log = LoggerFactory.getLogger(javaClass)

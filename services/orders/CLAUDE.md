@@ -22,9 +22,9 @@ a reason). Package `it.g03.orders`. This is the critical path — SLOs, tracing,
 - **No DB transaction held across a remote call.** Reserve/authorize are network calls — keep them
   outside open transactions so a slow/failed downstream can't pin connections, and so the work is
   resumable on redelivery.
-- **Cooperative async lifecycle.** Background work (the outbox relay) runs in a supervised
-  `CoroutineScope` and must cancel cleanly on shutdown/SIGTERM — in-flight work finishes or is cancelled,
-  never orphaned or double-processed.
+- **Cooperative async lifecycle.** Background work (the `@Scheduled` timeout sweeper) is Spring-managed and
+  stops cleanly on shutdown/SIGTERM — in-flight work finishes, never orphaned or double-processed. The outbox
+  is drained externally by Debezium CDC, not by an in-process relay.
 - **Terminal states are final.** Once confirmed or rejected, an order doesn't change; compensation
   (e.g. release a reservation after a decline) happens through the saga, not by mutating a terminal order.
 
@@ -36,7 +36,7 @@ a reason). Package `it.g03.orders`. This is the critical path — SLOs, tracing,
   breaker with a safe fallback, bulkheads. A downstream failure must be contained, never propagated as
   an unbounded hang. (Resilience4j is on the classpath; wire it deliberately around the real calls.)
 - Drive the saga off events/state; treat the synchronous Payments decision as the branch signal.
-- Test the saga and the outbox relay with **fakes** for downstream calls and Kafka, on Testcontainers
+- Test the saga and the outbox write path with **fakes** for downstream calls and Kafka, on Testcontainers
   PostgreSQL; make idempotency/replay a first-class test.
 
 ## Don't
@@ -51,8 +51,9 @@ a reason). Package `it.g03.orders`. This is the critical path — SLOs, tracing,
 
 Organize by layer, **one repository per file**, keeping small cohesive types grouped (mirrors the Catalog reference layout):
 
-- `controller/` — REST controllers + their request/response DTOs
-- `service/` — business logic (the saga, state machine, outbox relay)
+- `controller/` — REST controllers + the `GlobalExceptionHandler` (`@RestControllerAdvice`)
+- `dto/` — request/response DTOs, `ErrorResponse`, and the `Order.toResponse()` mapper
+- `service/` — business logic (the saga, state machine, timeout sweeper)
 - `repository/` — Spring Data repositories, **one repository per file** (split today's `Repositories.kt`)
 - `entities/` — JPA entities (`Order`, `OutboxEvent`, …), one per file
 - `events/` — Kafka listeners, publishers, event payloads

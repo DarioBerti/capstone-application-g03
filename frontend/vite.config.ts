@@ -17,6 +17,7 @@ export default defineConfig({
       '/api/orders': port('ORDERS_PORT', 8080),
       '/api/inventory': port('INVENTORY_PORT', 8081),
       '/api/payments': port('PAYMENTS_PORT', 8082),
+      '/api/users': port('USERS_PORT', 8085),
     },
   },
 })

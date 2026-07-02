@@ -52,6 +52,7 @@ jobs:
             inventory:     'services/inventory/**'
             payments:      'services/payments/**'
             notifications: 'services/notifications/**'
+            users:         'services/users/**'
 
       # Build the JSON list of services that should be processed by the build matrix
       - name: Assemble changed-service list

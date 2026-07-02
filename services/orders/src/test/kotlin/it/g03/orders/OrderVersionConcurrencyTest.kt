@@ -2,11 +2,8 @@ package it.g03.orders
 
 import it.g03.orders.entities.OrderStatus
 import it.g03.orders.events.Topics
-import it.g03.orders.gateway.InventoryGateway
-import it.g03.orders.gateway.PaymentsGateway
 import it.g03.orders.repository.OrderRepository
 import it.g03.orders.repository.OutboxEventRepository
-import it.g03.orders.service.OrderSaga
 import it.g03.orders.service.OrderService
 import it.g03.orders.service.OrderStateMachine
 import org.junit.jupiter.api.AfterEach
@@ -14,27 +11,28 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 
 /**
- * Proves the @Version optimistic lock is LOAD-BEARING: when several drivers (the recovery sweep across pods, or sweep +
- * redelivery) race to apply the SAME terminal transition, exactly ONE order-confirmed + one notification reach the
- * outbox — the losers' commits roll back instead of appending duplicates. Drop @Version (or the V2 column) and this
- * test fails. Mirrors InventoryConcurrencyTest's multi-thread style
+ * Proves the @Version optimistic lock is LOAD-BEARING: when several drivers (the timeout sweeper's re-drive racing an
+ * in-flight reply, or two pods) race to apply the SAME terminal transition, exactly ONE order-confirmed + one
+ * notification reach the outbox — the losers' commits roll back instead of appending duplicates. Drop @Version (or the
+ * V2 column) and this test fails. Mirrors InventoryConcurrencyTest's multi-thread style.
  */
 @SpringBootTest(
     properties = [
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
-        "app.outbox.enabled=false",
-        "app.recovery.enabled=false",
+        "app.timeout-sweeper.enabled=false",
     ],
 )
 @Tag("chaos-03") // anticipates chaos #3 (node-disruption): two pods racing a terminal transition emit exactly one event
+@Import(TestcontainersConfiguration::class)
 class OrderVersionConcurrencyTest {
 
     @Autowired lateinit var stateMachine: OrderStateMachine
@@ -53,8 +51,11 @@ class OrderVersionConcurrencyTest {
 
     @Test
     fun `concurrent confirm emits exactly one order-confirmed (no duplicate terminal events)`() {
-        val order = orderService.placeOrder("TRENO-TEST", 1)
+        val order = orderService.placeOrder("FR9592-20260629", 1, buyerSub = "buyer-1", buyerEmail = "buyer@example.org")
         val id = order.id.toString()
+        // confirm() only fires the AUTHORIZED -> CONFIRMED edge, so drive the order to AUTHORIZED first
+        stateMachine.onReservationResult(order.id, "RESERVED")
+        stateMachine.onPaymentResult(order.id, "AUTHORIZED")
         val start = CountDownLatch(1)
 
         val futures = (1..8).map {

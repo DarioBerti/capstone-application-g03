@@ -1,6 +1,8 @@
 package it.g03.payments
 
 import it.g03.payments.entities.AuthorizationStatus
+import it.g03.payments.events.Topics
+import it.g03.payments.repository.OutboxEventRepository
 import it.g03.payments.repository.PaymentAuthorizationRepository
 import it.g03.payments.service.PaymentsService
 import org.junit.jupiter.api.AfterEach
@@ -9,54 +11,73 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @SpringBootTest(  // boot the full Spring app context to test service + repository wiring
     properties = [
         "spring.kafka.bootstrap-servers=localhost:9092",
-        // no broker in tests: swap the Kafka publisher for the no-op one
+        // no broker in tests: swap the Kafka publisher for the no-op one and keep listeners + relay off
         "events.publish.enabled=false",
+        "app.kafka-listeners-enabled=false",
     ],
 )
-@Tag("chaos-02") // anticipates chaos #2 (inventory-podkill / redelivery): a retried/duplicated authorize charges once; void idempotent
+@Import(TestcontainersConfiguration::class)
+@Tag("chaos-02") // anticipates chaos #2 (podkill / redelivery): a retried/duplicated authorize charges once; capture/cancel idempotent
 class PaymentsServiceTest {
 
     // Injects the service under test
     @Autowired lateinit var service: PaymentsService
     // Injects the repository so the test can prepare and clean the database state directly
     @Autowired lateinit var repository: PaymentAuthorizationRepository
+    // Injects the outbox repository to assert the saga reply was appended in the same transaction
+    @Autowired lateinit var outbox: OutboxEventRepository
 
     // Thread pool used to fire concurrent duplicate authorizations in the race test
     private val pool = Executors.newFixedThreadPool(8)
 
     @BeforeEach  // runs before each test method to start from a known database state
-    fun cleanSlate() = repository.deleteAll()
+    fun cleanSlate() {
+        repository.deleteAll()
+        outbox.deleteAll()
+    }
 
     @AfterEach  // runs after each test method to release the thread pool
     fun shutdownPool() {
         pool.shutdownNow()
     }
 
-    // Verifies an amount below the threshold is persisted as AUTHORIZED (one row)
+    private fun outboxCount(topic: String) = outbox.findAll().count { it.topic == topic }
+
+    // --- authorize: phase 1 is a HOLD ---------------------------------------------------------------------------
+
+    // Verifies an amount below the threshold is a HOLD: AUTHORIZED with a PSP reference but NOT yet captured
     @Test
-    fun `authorize persists AUTHORIZED below the decline threshold`() {
+    fun `authorize below the threshold places a HOLD - AUTHORIZED, pspReference set, not captured`() {
         val outcome = service.authorize("order-1", 5_000)
 
         assertEquals(AuthorizationStatus.AUTHORIZED, outcome.authorization.status)
         assertEquals(1, repository.count())
+        assertNotNull(outcome.authorization.pspReference, "an AUTHORIZED hold carries a PSP reference")
+        assertNull(outcome.authorization.capturedAt, "a HOLD is not captured until the capture step")
+        assertNull(outcome.authorization.declineReason)
     }
 
-    // Verifies the deterministic mock-PSP rule: amounts at or above the threshold are DECLINED
+    // Verifies the deterministic mock-PSP rule: amounts at or above the threshold are DECLINED with a reason
     @Test
     fun `amounts at or above the threshold are DECLINED (mock PSP rule)`() {
         val outcome = service.authorize("order-big", 100_000)
 
         assertEquals(AuthorizationStatus.DECLINED, outcome.authorization.status)
+        assertNotNull(outcome.authorization.declineReason, "a DECLINED authorization records why")
+        assertNull(outcome.authorization.pspReference, "nothing was authorized -> no PSP reference")
     }
 
     // Verifies a retried authorize is an idempotent replay: it must NOT double-charge (no second row)
@@ -107,48 +128,125 @@ class PaymentsServiceTest {
         assertFailsWith<IllegalArgumentException> { service.authorize("order-x", 0) }
     }
 
-    // --- void / reversal (Fase 2 #4) -----------------------------------------------------------------------------
+    // --- capture: phase 2 takes the held funds ------------------------------------------------------------------
 
-    // Verifies the compensation: voiding an AUTHORIZED charge reverses it to VOIDED on the SAME row (no second row)
+    // Verifies the second phase: capture moves an AUTHORIZED hold to CAPTURED and stamps captured_at
     @Test
-    fun `void reverses an AUTHORIZED charge to VOIDED on the same row`() {
-        val authorized = service.authorize("order-1", 5_000)
+    fun `capture moves an AUTHORIZED hold to CAPTURED and stamps captured_at`() {
+        val held = service.authorize("order-1", 5_000)
 
-        val outcome = service.void("order-1")
+        val captured = service.capture("order-1")
 
-        assertEquals(AuthorizationStatus.VOIDED, outcome.authorization.status)
-        assertEquals(authorized.authorization.id, outcome.authorization.id, "void mutates the existing aggregate")
-        assertEquals(1, repository.count(), "void must NOT create a second row")
-        assertEquals(AuthorizationStatus.VOIDED, repository.findByOrderId("order-1")!!.status)
+        assertEquals(AuthorizationStatus.CAPTURED, captured.authorization.status)
+        assertEquals(held.authorization.id, captured.authorization.id, "capture mutates the existing aggregate")
+        assertNotNull(captured.authorization.capturedAt, "a captured charge is stamped")
+        assertEquals(1, repository.count(), "capture must NOT create a second row")
     }
 
-    // Verifies idempotency (no double-storno): a retried void is a replay, the charge is reversed exactly once
+    // Verifies idempotency: a retried capture is a no-op replay, the funds are captured exactly once
     @Test
-    fun `retried void is an idempotent replay - never a second reversal`() {
+    fun `retried capture is an idempotent replay`() {
         service.authorize("order-1", 5_000)
-        val first = service.void("order-1")
-        val replay = service.void("order-1")
+        val first = service.capture("order-1")
+        val replay = service.capture("order-1")
 
         assertEquals(false, first.replayed)
-        assertTrue(replay.replayed, "the second void must be a no-op replay")
+        assertTrue(replay.replayed, "the second capture must be a no-op replay")
+        assertEquals(AuthorizationStatus.CAPTURED, replay.authorization.status)
+        assertEquals(1, repository.count())
+    }
+
+    // Verifies the defensive not-found path: capturing an order with no authorization is a domain not-found (-> 404)
+    @Test
+    fun `capture of an unknown order raises not-found`() {
+        assertFailsWith<NoSuchElementException> { service.capture("order-unknown") }
+    }
+
+    // --- cancelAuthorization: release a hold (compensation) -----------------------------------------------------
+
+    // Verifies the compensation: cancelling an AUTHORIZED hold releases it to VOIDED on the SAME row (no money moved)
+    @Test
+    fun `cancelAuthorization releases an AUTHORIZED hold to VOIDED`() {
+        val held = service.authorize("order-1", 5_000)
+
+        val cancelled = service.cancelAuthorization("order-1")
+
+        assertEquals(AuthorizationStatus.VOIDED, cancelled.authorization.status)
+        assertEquals(held.authorization.id, cancelled.authorization.id, "cancel mutates the existing aggregate")
+        assertNull(cancelled.authorization.capturedAt, "a released hold was never captured")
+        assertEquals(1, repository.count(), "cancel must NOT create a second row")
+    }
+
+    // Verifies idempotency: a retried cancel is a no-op replay, the hold is released exactly once
+    @Test
+    fun `retried cancelAuthorization is an idempotent replay`() {
+        service.authorize("order-1", 5_000)
+        val first = service.cancelAuthorization("order-1")
+        val replay = service.cancelAuthorization("order-1")
+
+        assertEquals(false, first.replayed)
+        assertTrue(replay.replayed, "the second cancel must be a no-op replay")
         assertEquals(AuthorizationStatus.VOIDED, replay.authorization.status)
         assertEquals(1, repository.count())
     }
 
-    // Verifies the no-op branch: voiding a DECLINED authorization changes nothing (nothing was ever charged)
+    // Verifies the no-op branch: cancelling a DECLINED authorization changes nothing (nothing was ever held)
     @Test
-    fun `void of a DECLINED authorization is a no-op`() {
+    fun `cancelAuthorization of a DECLINED authorization is a no-op`() {
         service.authorize("order-big", 100_000)
 
-        val outcome = service.void("order-big")
+        val outcome = service.cancelAuthorization("order-big")
 
         assertTrue(outcome.replayed)
         assertEquals(AuthorizationStatus.DECLINED, outcome.authorization.status, "a declined authorization stays DECLINED")
     }
 
-    // Verifies the defensive not-found path: voiding an order with no authorization is a domain not-found (-> 404)
+    // Verifies the defensive not-found path: cancelling an order with no authorization is a domain not-found (-> 404)
     @Test
-    fun `void of an unknown order raises not-found`() {
-        assertFailsWith<NoSuchElementException> { service.void("order-unknown") }
+    fun `cancelAuthorization of an unknown order raises not-found`() {
+        assertFailsWith<NoSuchElementException> { service.cancelAuthorization("order-unknown") }
+    }
+
+    // --- outbox replies committed in the same transaction -------------------------------------------------------
+
+    // Verifies authorize appends exactly one payment-result reply to the outbox, AND re-emits on idempotent replay
+    @Test
+    fun `authorize appends one payment-result reply, including on replay`() {
+        service.authorize("order-1", 5_000)
+        assertEquals(1, outboxCount(Topics.PAYMENT_RESULT), "first authorize appends exactly one payment-result")
+
+        service.authorize("order-1", 5_000)
+        assertEquals(2, outboxCount(Topics.PAYMENT_RESULT), "the replay re-emits the reply (at-least-once recovery)")
+    }
+
+    // Verifies a DECLINED authorize still appends a payment-result reply (the saga branches on DECLINED)
+    @Test
+    fun `a DECLINED authorize appends a payment-result reply`() {
+        service.authorize("order-big", 100_000)
+
+        assertEquals(1, outboxCount(Topics.PAYMENT_RESULT))
+    }
+
+    // Verifies capture appends exactly one payment-captured reply, AND re-emits on idempotent replay
+    @Test
+    fun `capture appends one payment-captured reply, including on replay`() {
+        service.authorize("order-1", 5_000)
+
+        service.capture("order-1")
+        assertEquals(1, outboxCount(Topics.PAYMENT_CAPTURED), "first capture appends exactly one payment-captured")
+
+        service.capture("order-1")
+        assertEquals(2, outboxCount(Topics.PAYMENT_CAPTURED), "the replay re-emits the reply (at-least-once recovery)")
+    }
+
+    // Verifies cancelAuthorization emits NO reply of its own (Orders is already rejecting the order)
+    @Test
+    fun `cancelAuthorization appends no reply`() {
+        service.authorize("order-1", 5_000)   // the only reply in play is this authorize's payment-result
+
+        service.cancelAuthorization("order-1")
+
+        assertEquals(1, outboxCount(Topics.PAYMENT_RESULT), "cancel adds no payment-result of its own")
+        assertEquals(0, outboxCount(Topics.PAYMENT_CAPTURED), "cancel adds no payment-captured")
     }
 }

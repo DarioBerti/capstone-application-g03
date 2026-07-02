@@ -1,22 +1,36 @@
 spring:
   application:
     name: orders
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100
   datasource:
-    url: jdbc:h2:mem:ordersdb
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
+    # PostgreSQL everywhere (no H2). Values are env-driven with local-dev defaults; the cluster supplies
+    # them via the config repo (ConfigMap/SealedSecret). Orders has a DEDICATED money-path datasource; dev
+    # uses one shared `eurotransit` database with a schema per service — this service owns `orders`.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:eurotransit}
+    username: ${DB_USER:orders}
+    password: ${DB_PASS:orders}
+    driver-class-name: org.postgresql.Driver
   flyway:
-    enabled: false   # local H2 dev: schema via ddl-auto; Flyway runs only on the postgres profile
-  h2:
-    console:
-      enabled: true
+    # Flyway owns the schema; it creates and migrates into the per-service `orders` schema
+    enabled: true
+    schemas: orders
+    default-schema: orders
   jpa:
     hibernate:
-      ddl-auto: update
+      # Hibernate only validates the Flyway-owned schema; it never mutates it
+      ddl-auto: validate
+    # Don't hold the persistence context + DB connection open for the whole request (it ties up a pooled
+    # connection across the saga's remote calls and undermines bulkheading on the money path).
+    open-in-view: false
     show-sql: true
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: orders
         format_sql: true
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
@@ -30,6 +44,21 @@ spring:
       auto-offset-reset: earliest
       # Manual ack: we commit the offset only after the handler has durably processed the event, so an at-least-once redelivery is safe (consumers are idempotent)
       enable-auto-commit: false
+    # Fase 4 cross-Kafka tracing: the listener observation extracts the W3C `traceparent` header that
+    # Debezium copies from the outbox row, so the consumer span CONTINUES the producer's trace instead of
+    # starting a fresh one; template observation covers the few direct sends (the DLT recoverer).
+    listener:
+      observation-enabled: true
+    template:
+      observation-enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # INBOUND: validate Keycloak user tokens on /api/orders. jwk-set-uri (NOT issuer-uri) builds the
+          # decoder lazily, so startup is not coupled to Keycloak (Pillar C); SecurityConfig checks `iss`.
+          # No oauth2 CLIENT block: the money path is async Kafka now, so there are no authenticated outbound calls.
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/certs}
 
 server:
   port: 8080
@@ -37,19 +66,19 @@ server:
 app:
   # Flat demo pricing: looking prices up in Catalog would add a sync dependency to the money path that the track's interaction shape does not call for
   unit-price-cents: 1000
-  # Sibling-service base URLs: env vars in-cluster (Kubernetes Service DNS, injected by the Helm chart), localhost ports for local multi-process dev
-  inventory-base-url: ${INVENTORY_BASE_URL:http://localhost:8081}
-  payments-base-url: ${PAYMENTS_BASE_URL:http://localhost:8082}
-  # Transactional-outbox relay (see OutboxPublisher): tests set enabled=false
-  outbox:
-    enabled: true
-    poll-interval: PT0.5S
-  # Recovery sweep (OrderRecoverySweeper): retries orders parked in PAYMENT_PENDING by the circuit-breaker fallback; tests set enabled=false to avoid racing their assertions
-  recovery:
+  # Expected `iss` claim on inbound tokens; SecurityConfig rejects tokens from any other issuer.
+  oidc:
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
+  # Timeout sweeper (OrderTimeoutSweeper): re-drives orders stuck in a non-terminal state past the deadline by
+  # re-emitting the command for their current state (idempotent commands make a re-send safe). This is the
+  # liveness backstop of the async saga; tests set enabled=false to avoid racing their assertions.
+  timeout-sweeper:
     enabled: true
     poll-interval: PT5S
-    # Orders parked longer than this are rejected (RESERVATION_EXPIRED) WITHOUT re-authorizing — see OrderRecoverySweeper. MUST be <= the inventory hold TTL (inventory.reservation.ttl = PT2M) so we never charge a card for a hold that was already restocked
-    max-park: PT2M
+    # Backstop for genuinely-LOST replies only. Must exceed worst-case step latency (incl. a consumer pod
+    # restart + group rebalance + Spring Boot startup, ~60-90s on a small cluster); too tight and the sweeper
+    # re-drives merely-slow steps, amplifying an outage into duplicate (idempotent) commands.
+    deadline: PT2M
 
 management:
   endpoints:
@@ -70,10 +99,7 @@ management:
       enabled: true
     livenessstate:
       enabled: true
-    # The circuit breaker must NEVER influence health/readiness: an OPEN breaker is the system WORKING (shedding load on a failing downstream), not failing. Keep the probes independent of downstream state (Pillar C, deck 11 slide 13-14)
-    circuitbreakers:
-      enabled: false
-    # Same rationale for the intake rate limiter (Fase 2 #3): shedding excess load is the system WORKING (controlled refusal), not failing. A saturated limiter must NOT flip readiness
+    # The intake rate limiter must NEVER influence health/readiness (Fase 2 #3): shedding excess load is the system WORKING (controlled refusal), not failing. A saturated limiter must NOT flip readiness
     ratelimiters:
       enabled: false
   tracing:
@@ -83,57 +109,27 @@ management:
     tracing:
       endpoint: http://localhost:4318/v1/traces
 
-# Circuit breaker on Orders -> Payments (Pillar C). Thresholds are a TEAM policy decision (docs/design.md, decision 7).
-# Opens when the recent window has >50% FAILED calls OR >50% SLOW calls (P99 > 2s) — the prof's two open criteria (deck 11, slide 17).
-# Only transport faults (timeout / 5xx / connection refused) count; a 4xx client error is ignored (out of contract);
-# a DECLINED authorization is a normal 200 body and never reaches the breaker. Applied PROGRAMMATICALLY via the
-# registry (see HttpPaymentsGateway), so it does not depend on the AOP aspect engaging on Spring Boot 4 (agent-log #2).
+# The Orders -> Payments circuit breaker, the retry, and the bulkhead are RETIRED: the money path is now async
+# Kafka command/reply, so its resilience comes from temporal decoupling (Kafka buffering + bounded consumer
+# retry + DLT via KafkaErrorHandler + the timeout sweeper), not a synchronous breaker. Only the edge rate
+# limiter survives (it governs the sync POST /api/orders intake, which is unchanged). See docs/design.md.
 resilience4j:
-  circuitbreaker:
-    instances:
-      payments:
-        sliding-window-type: COUNT_BASED
-        sliding-window-size: 10
-        minimum-number-of-calls: 5
-        failure-rate-threshold: 50
-        slow-call-duration-threshold: PT2S
-        slow-call-rate-threshold: 50
-        wait-duration-in-open-state: PT10S
-        permitted-number-of-calls-in-half-open-state: 2
-        automatic-transition-from-open-to-half-open-enabled: true
-        ignore-exceptions:
-          - org.springframework.web.client.HttpClientErrorException
-          # Bulkhead saturation is a LOCAL concurrency cap, not a downstream fault: it must not by itself open the breaker (real slowness is already caught by the >2s slow-call rate). Fase 2 #2.
-          - io.github.resilience4j.bulkhead.BulkheadFullException
-  # Retry (Fase 2 #2): absorbs up to TWO transient transport faults inline (max-attempts 3 = 1 call + 2 retries) before it reaches the breaker. Values are SLO-bounded (checkout e2e p95 <= 5s), deliberately shorter than the slide-22 example (1s/2s/4s): the prof's own rule is "derive retry/timeout from the end-to-end deadline" — the sustained-outage case is handled by breaker -> PAYMENT_PENDING -> recovery sweep, not by long inline waits. Only TRANSPORT faults are retried (never a 4xx / business outcome). TEAM policy decision (docs/design.md, decision 7).
-  retry:
-    instances:
-      payments: &gatewayRetry
-        max-attempts: 3
-        wait-duration: PT0.2S
-        enable-exponential-backoff: true
-        exponential-backoff-multiplier: 2
-        enable-randomized-wait: true            # jitter: de-synchronise retries across callers (anti retry-storm, slide 45)
-        retry-exceptions:
-          - org.springframework.web.client.HttpServerErrorException   # 5xx
-          - org.springframework.web.client.ResourceAccessException    # connect/read timeout, connection refused
-      inventory: *gatewayRetry                  # reserve/confirm/release are idempotent (UNIQUE(order_id, product_id)) -> retry-safe
-  # Bulkhead (Fase 2 #2): SEMAPHORE (sufficient for synchronous blocking calls). SEPARATE instances per dependency are the isolation: a slow Payments exhausts only the payments permits, never the ones Inventory needs (deck 11 slide 20). Fail-fast when full (no queue, slide 7). Sizes are a TEAM policy decision, tunable.
-  bulkhead:
-    instances:
-      payments:
-        max-concurrent-calls: 8                 # the PSP is the scarcer/slower downstream -> tighter cap
-        max-wait-duration: PT0S                 # controlled refusal: do not queue, fail fast (BulkheadFullException)
-      inventory:
-        max-concurrent-calls: 16
-        max-wait-duration: PT0S
-  # Backpressure / load shedding at the synchronous intake. The public POST /api/orders is rate-limited; once the per-window budget is exhausted the request is REFUSED IMMEDIATELY with HTTP 429 + Retry-After (see OrdersIntakeRateLimiter + OrdersController), instead of being queued until the system collapses.
-  # Applied PROGRAMMATICALLY via RateLimiterRegistry
-  # NB: the limit is on the EDGE only: internal saga calls are governed by breaker/bulkhead, never a 429 (#3.5).
-  # The threshold is a TEAM policy decision, tunable from a load-test baseline
+  # Backpressure / load shedding at the synchronous intake (@RateLimiter on OrdersController.place). Once the
+  # per-window budget is exhausted the public POST /api/orders is refused immediately with HTTP 429 + Retry-After
+  # instead of being queued until the system collapses. The 429 is EDGE-only: internal saga calls are governed by
+  # breaker/bulkhead, never a 429 (#3.5). The threshold is a TEAM policy decision, tunable from a load-test baseline.
   ratelimiter:
     instances:
       orders-intake:
         limit-for-period: 20      # max accepted POST /api/orders per refresh window (demo value, tunable)
         limit-refresh-period: PT1S    # the window -> ~20 accepted req/s sustained
         timeout-duration: PT0S    # controlled refusal: NEVER block/queue waiting for a permit -> shed immediately
+
+# Kafka's client classes log their ENTIRE resolved config as a multi-hundred-line table at INFO on every
+# client init (ProducerConfig/ConsumerConfig/AdminClientConfig) — pure startup noise that buries real logs.
+# Silence just those loggers; genuine Kafka INFO (group rebalances, partition assignment) is kept.
+logging:
+  level:
+    org.apache.kafka.clients.producer.ProducerConfig: warn
+    org.apache.kafka.clients.consumer.ConsumerConfig: warn
+    org.apache.kafka.clients.admin.AdminClientConfig: warn

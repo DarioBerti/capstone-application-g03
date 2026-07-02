@@ -2,27 +2,39 @@ spring:
   application:
     # logical service name used in logs, metrics and discovery-related metadata
     name: inventory
+  data:
+    web:
+      pageable:
+        # sane default + hard cap on page size for any paginated list endpoint
+        default-page-size: 20
+        max-page-size: 100
   datasource:
-    # local dev database: in-memory H2 so the service starts without external dependencies
-    url: jdbc:h2:mem:inventorydb
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
+    # PostgreSQL everywhere (no H2). Values are env-driven with local-dev defaults; the cluster supplies
+    # them via the config repo (ConfigMap/SealedSecret). Inventory has a DEDICATED money-path datasource;
+    # dev uses one shared `eurotransit` database with a schema per service — this service owns `inventory`.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:eurotransit}
+    username: ${DB_USER:inventory}
+    password: ${DB_PASS:inventory}
+    driver-class-name: org.postgresql.Driver
   flyway:
-    # Local H2 development uses Hibernate ddl-auto; Flyway is reserved for the postgres profile
-    enabled: false   # local H2 dev: schema via ddl-auto; Flyway runs only on the postgres profile
-  h2:
-    console:
-      # useful for debugging local state
-      enabled: true
+    # Flyway owns the schema; it creates and migrates into the per-service `inventory` schema
+    enabled: true
+    schemas: inventory
+    default-schema: inventory
   jpa:
     hibernate:
-      # let Hibernate create/update schema in local dev
-      ddl-auto: update
-    # print SQL to make persistence behavior easier to inspect locally
+      # Hibernate only validates the Flyway-owned schema; it never mutates it
+      ddl-auto: validate
+    # Don't hold the persistence context + DB connection open for the whole request (undermines the
+    # connection-pool bulkhead the contended path relies on under load).
+    open-in-view: false
+    # print SQL to make persistence behavior easier to inspect locally (off in the cluster overlay)
     show-sql: true
     properties:
       hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        # this service's tables live in the `inventory` schema
+        default_schema: inventory
         # format SQL so the output is easier to read in logs
         format_sql: true
   kafka:
@@ -38,10 +50,30 @@ spring:
       auto-offset-reset: earliest
       # Manual offset commit: we acknowledge only AFTER the handler durably processed the event, so a crash mid-processing causes a redelivery (at-least-once) instead of a silent loss, which is safe because our handlers are idempotent
       enable-auto-commit: false
+    # Fase 4 cross-Kafka tracing: continue the W3C trace carried by the Debezium-produced `traceparent`
+    # header (listener); template observation covers the few direct sends (the DLT recoverer).
+    listener:
+      observation-enabled: true
+    template:
+      observation-enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Validate Keycloak JWTs. jwk-set-uri (NOT issuer-uri) builds the decoder lazily — JWKS is
+          # fetched + cached on the first token — so startup is not coupled to Keycloak (Pillar C).
+          # The `iss` claim is checked separately against app.oidc.issuer by SecurityConfig.
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/certs}
 
 server:
   # Default local HTTP port
   port: 8080
+
+# App-level tunables (overridable by env), see root CLAUDE.md "Configuration & variable injection".
+app:
+  oidc:
+    # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
 
 # Reservation hold semantics: a RESERVED hold not confirmed/released within "ttl" is swept back to stock by the reconciler (every "sweep-interval"). ISO-8601 durations
 inventory:
@@ -87,3 +119,12 @@ management:
     tracing:
       # local default collector endpoint; overridden in cluster deployment
       endpoint: http://localhost:4318/v1/traces
+
+# Kafka's client classes log their ENTIRE resolved config as a multi-hundred-line table at INFO on every
+# client init (ProducerConfig/ConsumerConfig/AdminClientConfig) — pure startup noise that buries real logs.
+# Silence just those loggers; genuine Kafka INFO (group rebalances, partition assignment) is kept.
+logging:
+  level:
+    org.apache.kafka.clients.producer.ProducerConfig: warn
+    org.apache.kafka.clients.consumer.ConsumerConfig: warn
+    org.apache.kafka.clients.admin.AdminClientConfig: warn

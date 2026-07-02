@@ -1,14 +1,16 @@
 package it.g03.orders
 
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry
+import io.github.resilience4j.ratelimiter.RequestNotPermitted
 import io.micrometer.core.instrument.MeterRegistry
-import it.g03.orders.controller.IntakeOverloadedException
-import it.g03.orders.controller.OrdersIntakeRateLimiter
-import it.g03.orders.gateway.PaymentsGateway
+import it.g03.orders.controller.GlobalExceptionHandler
+import it.g03.orders.repository.OrderRepository
+import it.g03.orders.service.OrderService
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import org.springframework.context.annotation.Import
 import kotlin.test.assertTrue
 
 /**
@@ -17,18 +19,17 @@ import kotlin.test.assertTrue
  * `traceId`/`userId`) is already followed; this test makes a future violation BUILD-BREAKING instead of a
  * silent prod cardinality explosion.
  *
- * It triggers two real custom-metric families deterministically (no flaky async saga): the intake shed
- * (`orders_intake_shed_total`) and a Payments gateway failure (`orders_payment_failures_total{outcome}` — a
- * blocking call to the dead local default port falls back to UNAVAILABLE), then asserts EVERY registered
- * `orders_*` meter carries only allowed tag keys and no id-shaped tag value.
+ * It triggers the two surviving custom-metric families deterministically (no flaky async saga): the intake
+ * shed (`orders_intake_shed_total`) and the placement counter (`orders_placed_total`), then asserts EVERY
+ * registered `orders_*` meter carries only allowed tag keys and no id-shaped tag value. (The gateway's
+ * `orders_payment_failures_total{outcome}` is gone with the sync gateways.)
  */
 @SpringBootTest(
     properties = [
         "spring.kafka.bootstrap-servers=localhost:9092",
         "events.publish.enabled=false",
         "app.kafka-listeners-enabled=false",
-        "app.outbox.enabled=false",
-        "app.recovery.enabled=false",
+        "app.timeout-sweeper.enabled=false",
         // Shrink the intake budget so a shed is deterministic. NB: limit-for-period=2 (NOT 1) is deliberately
         // DISTINCT from OrdersIntakeRateLimiterTest's property set so Spring gives this class its OWN cached
         // context — otherwise the two would share one context and this test consuming the rate-limiter permit
@@ -38,11 +39,14 @@ import kotlin.test.assertTrue
         "resilience4j.ratelimiter.instances.orders-intake.timeout-duration=PT0S",
     ],
 )
+@Import(TestcontainersConfiguration::class)
 class MetricCardinalityGuardTest {
 
     @Autowired private lateinit var meterRegistry: MeterRegistry
-    @Autowired private lateinit var rateLimiter: OrdersIntakeRateLimiter
-    @Autowired private lateinit var payments: PaymentsGateway
+    @Autowired private lateinit var rateLimiters: RateLimiterRegistry
+    @Autowired private lateinit var handler: GlobalExceptionHandler
+    @Autowired private lateinit var orderService: OrderService
+    @Autowired private lateinit var orders: OrderRepository
 
     // The low-cardinality label vocabulary the team committed to (FASE2 §7.3). Anything else is a regression.
     private val allowedTagKeys = setOf("outcome", "type", "reason", "dependency", "status")
@@ -53,22 +57,29 @@ class MetricCardinalityGuardTest {
     // id-shaped VALUES (UUID or >=16-hex) catch a high-cardinality value smuggled in under an innocent key name
     private val idShaped = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-.*|^[0-9a-fA-F]{16,}$")
 
+    @BeforeEach
+    fun cleanSlate() {
+        orders.deleteAll()
+    }
+
     @Test
     fun `every custom orders metric stays low-cardinality`() {
-        // 1) register orders_intake_shed_total via a real shed (2 permit budget -> 3rd call sheds)
-        rateLimiter.withPermit { }
-        rateLimiter.withPermit { }
-        assertFailsWith<IntakeOverloadedException> { rateLimiter.withPermit { } }
+        // 1) register orders_intake_shed_total via a real shed: exhaust the 2-permit budget, then map the
+        //    rejection through the handler (the same path a 429 takes), which increments the shed counter.
+        val limiter = rateLimiters.rateLimiter("orders-intake")
+        assertTrue(limiter.acquirePermission())
+        assertTrue(limiter.acquirePermission())
+        assertTrue(!limiter.acquirePermission(), "3rd call must be over the 2-permit budget")
+        handler.overloaded(RequestNotPermitted.createRequestNotPermitted(limiter))
 
-        // 2) register orders_payment_failures_total{outcome} via a real gateway call to the dead default port
-        val result = payments.void("guard-probe-order")
-        assertEquals("UNAVAILABLE", result.status, "void against the dead local port must fall back to UNAVAILABLE")
+        // 2) register orders_placed_total via a real placement
+        orderService.placeOrder("FR9592-20260629", 1, buyerSub = "buyer-1", buyerEmail = "buyer@example.org")
 
         // sanity: the two custom families we just exercised are actually present (the scan below is non-trivial)
         val custom = meterRegistry.meters.filter { it.id.name.startsWith("orders_") }
         val names = custom.map { it.id.name }.toSet()
         assertTrue("orders_intake_shed_total" in names, "expected the shed counter to be registered")
-        assertTrue("orders_payment_failures_total" in names, "expected the gateway-failure counter to be registered")
+        assertTrue("orders_placed_total" in names, "expected the placement counter to be registered")
 
         // 3) the guard: no custom orders_* meter may carry a high-cardinality label
         custom.forEach { meter ->

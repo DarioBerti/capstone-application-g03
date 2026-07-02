@@ -30,9 +30,13 @@ dependencies {
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("tools.jackson.module:jackson-module-kotlin")
 
-	// Emits payment-authorized; coroutines for any async confirmation work. The starter pulls in
-	// spring-kafka AND Boot 4's Kafka auto-configuration (module spring-boot-kafka) that builds the
-	// KafkaTemplate bean — bare spring-kafka does not auto-configure it under Boot 4's modularized config.
+	// Security: validate Keycloak-issued JWTs as an OAuth2 resource server (lazy JWKS, see application.yml)
+	implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
+
+	// Consumes the saga commands (authorize/capture/cancel) and emits replies via the transactional outbox;
+	// coroutines drive the outbox relay (Pillar A). The starter pulls in spring-kafka AND Boot 4's Kafka
+	// auto-configuration (module spring-boot-kafka) that builds the KafkaTemplate bean — bare spring-kafka does
+	// not auto-configure it under Boot 4's modularized config.
 	implementation("org.springframework.boot:spring-boot-starter-kafka")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 
@@ -46,21 +50,30 @@ dependencies {
 	implementation("io.micrometer:micrometer-registry-prometheus")
 	implementation("io.micrometer:micrometer-tracing-bridge-otel")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+	// Boot 4 split tracing auto-config out of actuator into its own module: without it NO Tracer/OTLP
+	// exporter bean is created and the two tracing deps above are inert (spans silently never exported).
+	implementation("org.springframework.boot:spring-boot-micrometer-tracing-opentelemetry")
 
-	// Schema migrations (postgres profile only): Flyway owns the schema, Hibernate validates. The starter
+	// Schema migrations (cluster profile only): Flyway owns the schema, Hibernate validates. The starter
 	// pulls in Flyway core AND Spring Boot 4's Flyway auto-configuration (module spring-boot-flyway) that
 	// actually runs migrations on startup — bare flyway-core does not auto-migrate under Boot 4's modules.
 	implementation("org.springframework.boot:spring-boot-starter-flyway")
 	runtimeOnly("org.flywaydb:flyway-database-postgresql")
 
 	runtimeOnly("org.postgresql:postgresql")
-	runtimeOnly("com.h2database:h2")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.springframework.kafka:spring-kafka-test")
+	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// Tests run against a real PostgreSQL via Testcontainers (no H2) — versions from the Spring Boot BOM.
+	// The "must not double-charge" UNIQUE(order_id) race is materially more faithful on real Postgres than H2.
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	testImplementation("org.testcontainers:testcontainers-postgresql")
+	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
 }
 
 kotlin {

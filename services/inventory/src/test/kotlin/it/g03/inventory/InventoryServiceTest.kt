@@ -1,137 +1,185 @@
 package it.g03.inventory
 
-import it.g03.inventory.entities.InventoryItem
+import it.g03.inventory.entities.TripSeats
 import it.g03.inventory.entities.Reservation
 import it.g03.inventory.entities.ReservationStatus
-import it.g03.inventory.repository.InventoryItemRepository
+import it.g03.inventory.events.ReservationResultEvent
+import it.g03.inventory.events.SeatsConfirmedEvent
+import it.g03.inventory.events.Topics
+import it.g03.inventory.repository.OutboxEventRepository
+import it.g03.inventory.repository.TripSeatsRepository
 import it.g03.inventory.repository.ReservationRepository
 import it.g03.inventory.service.InventoryService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
+import tools.jackson.databind.ObjectMapper
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-@SpringBootTest(properties = ["spring.kafka.bootstrap-servers=localhost:9092", "events.publish.enabled=false", "inventory.reservation.enabled=false"])  // boot the full Spring app context; reconciler sweep OFF so it never races the assertions (#5.5)
+// reconciler sweep OFF and outbox relay OFF so neither races the assertions; listeners off (no broker) (#5.5)
+@SpringBootTest(
+    properties = [
+        "spring.kafka.bootstrap-servers=localhost:9092",
+        "events.publish.enabled=false",
+        "app.kafka-listeners-enabled=false",
+        "inventory.reservation.enabled=false",
+    ],
+)
+@Import(TestcontainersConfiguration::class)
 class InventoryServiceTest {
 
     // Injects the service under test
     @Autowired lateinit var service: InventoryService
-    // Injects the inventory-item repository so the test can prepare and inspect seat counts directly
-    @Autowired lateinit var items: InventoryItemRepository
+    // Injects the trip-seats repository so the test can prepare and inspect seat counts directly
+    @Autowired lateinit var items: TripSeatsRepository
     // Injects the reservation repository so the test can prepare and clean the database state directly
     @Autowired lateinit var reservations: ReservationRepository
+    // Injects the outbox repository so the test can assert the saga replies are appended in-transaction
+    @Autowired lateinit var outbox: OutboxEventRepository
+    @Autowired lateinit var objectMapper: ObjectMapper
 
-    // Small helper: reads current available seat count for a product
-    private fun available(productId: String) = items.findById(productId).orElseThrow().available
+    private val trip = "FR9592-20260629"
+
+    // Small helper: reads current available seat count for a trip
+    private fun available(tripCode: String) = items.findById(tripCode).orElseThrow().available
+
+    // Reply rows appended for an order on a given topic (the outbox key is the orderId)
+    private fun replies(topic: String, orderId: String) =
+        outbox.findAll().filter { it.topic == topic && it.aggregateId == orderId }
+
+    private fun reservationStatusOf(orderId: String) =
+        replies(Topics.RESERVATION_RESULT, orderId).map { objectMapper.readValue(it.payload, ReservationResultEvent::class.java).status }
+
+    private fun seatsConfirmedStatusOf(orderId: String) =
+        replies(Topics.SEATS_CONFIRMED, orderId).map { objectMapper.readValue(it.payload, SeatsConfirmedEvent::class.java).status }
 
     @BeforeEach  // runs before each test method to start from a known database state
     fun cleanSlate() {
+        outbox.deleteAll()
         reservations.deleteAll()
         items.deleteAll()
-        items.save(InventoryItem(productId = "TRENO-TEST", totalSeats = 10, available = 10))
+        items.save(TripSeats(tripCode = trip, totalSeats = 10, available = 10))
     }
 
-    // Verifies a successful reserve decrements availability and records a RESERVED hold
+    // Verifies a successful reserve decrements availability, records a RESERVED hold, and appends one RESERVED reply
     @Test
-    fun `reserve decrements availability and records RESERVED`() {
-        val outcome = service.reserve("order-1", "TRENO-TEST", 2)
+    fun `reserve decrements availability, records RESERVED, and appends a reservation-result reply`() {
+        val outcome = service.reserve("order-1", trip, 2)
 
         assertEquals(ReservationStatus.RESERVED, outcome.reservation.status)
         assertFalse(outcome.replayed)
-        assertEquals(8, available("TRENO-TEST"))
+        assertEquals(8, available(trip))
+        assertEquals(listOf("RESERVED"), reservationStatusOf("order-1"), "exactly one reservation-result reply, status RESERVED")
     }
 
-    // Verifies that reserving when sold out yields REJECTED and leaves availability untouched
+    // Verifies that reserving when sold out yields REJECTED, leaves availability untouched, and replies SOLD_OUT
     @Test
-    fun `sold out yields REJECTED and does not change availability`() {
-        service.reserve("order-1", "TRENO-TEST", 10)
+    fun `sold out yields REJECTED and replies SOLD_OUT`() {
+        service.reserve("order-1", trip, 10)
 
-        val outcome = service.reserve("order-2", "TRENO-TEST", 1)
+        val outcome = service.reserve("order-2", trip, 1)
 
         assertEquals(ReservationStatus.REJECTED, outcome.reservation.status)
-        assertEquals(0, available("TRENO-TEST"))
+        assertEquals(0, available(trip))
+        assertEquals(listOf("SOLD_OUT"), reservationStatusOf("order-2"), "sold-out reserve replies SOLD_OUT")
     }
 
     // Verifies a duplicate reserve for the same order replays the stored outcome and decrements only once
     @Test
     fun `duplicate reserve is an idempotent replay - one decrement only`() {
-        val first = service.reserve("order-1", "TRENO-TEST", 3)
-        val replay = service.reserve("order-1", "TRENO-TEST", 3)
+        val first = service.reserve("order-1", trip, 3)
+        val replay = service.reserve("order-1", trip, 3)
 
         assertTrue(replay.replayed)
         assertEquals(first.reservation.id, replay.reservation.id)
         assertEquals(ReservationStatus.RESERVED, replay.reservation.status)
-        assertEquals(7, available("TRENO-TEST"), "a duplicated delivery must not decrement twice")
+        assertEquals(7, available(trip), "a duplicated delivery must not decrement twice")
+    }
+
+    // Verifies the reply is RE-EMITTED on the idempotent replay path (at-least-once reply recovery for Orders)
+    @Test
+    fun `reserve replay re-emits the reservation-result reply`() {
+        service.reserve("order-1", trip, 3)
+        service.reserve("order-1", trip, 3) // duplicate delivery
+
+        assertEquals(listOf("RESERVED", "RESERVED"), reservationStatusOf("order-1"), "each delivery (original + replay) appends one reply")
+        assertEquals(7, available(trip), "the replay still must not decrement again")
     }
 
     // Verifies the recorded outcome for an orderId is immutable: a replay keeps REJECTED even after seats are restocked
     @Test
     fun `replay preserves the original outcome even after restock`() {
-        service.reserve("order-1", "TRENO-TEST", 10)
-        val rejected = service.reserve("order-2", "TRENO-TEST", 1) // sold out
-        service.release("order-1", "TRENO-TEST") // seats come back
+        service.reserve("order-1", trip, 10)
+        val rejected = service.reserve("order-2", trip, 1) // sold out
+        service.release("order-1", trip) // seats come back
 
-        val replay = service.reserve("order-2", "TRENO-TEST", 1)
+        val replay = service.reserve("order-2", trip, 1)
 
         // The reservation outcome for an orderId is immutable: a retry-as-new-purchase must use a new orderId (documented idempotency semantics)
         assertTrue(replay.replayed)
         assertEquals(ReservationStatus.REJECTED, rejected.reservation.status)
         assertEquals(ReservationStatus.REJECTED, replay.reservation.status)
+        assertEquals(listOf("SOLD_OUT", "SOLD_OUT"), reservationStatusOf("order-2"), "the replayed reply keeps SOLD_OUT")
     }
 
-    // Verifies confirm moves a hold RESERVED -> CONFIRMED, is idempotent, and does not restock
+    // Verifies confirm moves a hold RESERVED -> CONFIRMED, is idempotent, replies CONFIRMED on every delivery, and does not restock
     @Test
-    fun `confirm moves RESERVED to CONFIRMED and is idempotent`() {
-        service.reserve("order-1", "TRENO-TEST", 1)
+    fun `confirm moves RESERVED to CONFIRMED, replies CONFIRMED, and is idempotent`() {
+        service.reserve("order-1", trip, 1)
 
-        assertEquals(ReservationStatus.CONFIRMED, service.confirm("order-1", "TRENO-TEST").status)
-        assertEquals(ReservationStatus.CONFIRMED, service.confirm("order-1", "TRENO-TEST").status)
-        assertEquals(9, available("TRENO-TEST"), "confirm must not restock")
+        assertEquals(ReservationStatus.CONFIRMED, service.confirm("order-1", trip).status)
+        assertEquals(ReservationStatus.CONFIRMED, service.confirm("order-1", trip).status)
+        assertEquals(9, available(trip), "confirm must not restock")
+        assertEquals(listOf("CONFIRMED", "CONFIRMED"), seatsConfirmedStatusOf("order-1"), "each confirm delivery appends one seats-confirmed reply")
     }
 
-    // Verifies release restocks the held seats exactly once and is idempotent
+    // Verifies release restocks the held seats exactly once, is idempotent, and appends NO reply (Orders is already rejecting)
     @Test
-    fun `release restocks and is idempotent`() {
-        service.reserve("order-1", "TRENO-TEST", 4)
+    fun `release restocks, is idempotent, and appends no reply`() {
+        service.reserve("order-1", trip, 4)
+        val afterReserve = outbox.count() // the single reservation-result reply from reserve
 
-        assertEquals(ReservationStatus.RELEASED, service.release("order-1", "TRENO-TEST").status)
-        assertEquals(ReservationStatus.RELEASED, service.release("order-1", "TRENO-TEST").status)
-        assertEquals(10, available("TRENO-TEST"), "released seats come back exactly once")
+        assertEquals(ReservationStatus.RELEASED, service.release("order-1", trip).status)
+        assertEquals(ReservationStatus.RELEASED, service.release("order-1", trip).status)
+        assertEquals(10, available(trip), "released seats come back exactly once")
+        assertEquals(afterReserve, outbox.count(), "release must not append any outbox reply")
+        assertTrue(seatsConfirmedStatusOf("order-1").isEmpty(), "release never emits seats-confirmed")
     }
 
-    // Verifies the slow-payment race: a confirm arriving after the TTL expires the hold and restocks (never a stale confirm)
+    // Verifies the slow-payment race: a confirm arriving after the TTL expires the hold, restocks, and replies EXPIRED (never a stale confirm)
     @Test
-    fun `confirm after TTL expires the hold and restocks (slow-payment race)`() {
+    fun `confirm after TTL expires the hold, restocks, and replies EXPIRED (slow-payment race)`() {
         // Simulate a hold whose TTL elapsed before the payment came back: design refinement #3: Orders must get EXPIRED and compensate, never a stale confirm.
-        // (state prepared via save: @Modifying queries need a transaction, tests have none)
-        items.save(InventoryItem(productId = "TRENO-TEST", totalSeats = 10, available = 9))
+        items.save(TripSeats(tripCode = trip, totalSeats = 10, available = 9))
         reservations.save(
             Reservation(
-                orderId = "order-slow", productId = "TRENO-TEST", qty = 1,
+                orderId = "order-slow", tripCode = trip, qty = 1,
                 status = ReservationStatus.RESERVED,
                 createdAt = Instant.now().minusSeconds(600),
                 expiresAt = Instant.now().minusSeconds(300),
             ),
         )
 
-        val result = service.confirm("order-slow", "TRENO-TEST")
+        val result = service.confirm("order-slow", trip)
 
         assertEquals(ReservationStatus.EXPIRED, result.status)
-        assertEquals(10, available("TRENO-TEST"), "expired hold must restock")
+        assertEquals(10, available(trip), "expired hold must restock")
+        assertEquals(listOf("EXPIRED"), seatsConfirmedStatusOf("order-slow"), "a confirm after TTL replies EXPIRED")
     }
 
-    // Verifies the reconciler sweep expires overdue holds, restocks their seats, and marks them EXPIRED
+    // Verifies the reconciler sweep expires overdue holds, restocks their seats, marks them EXPIRED, and appends NO reply
     @Test
-    fun `reconciler sweep expires overdue holds and restocks`() {
-        items.save(InventoryItem(productId = "TRENO-TEST", totalSeats = 10, available = 8))
+    fun `reconciler sweep expires overdue holds, restocks, and appends no reply`() {
+        items.save(TripSeats(tripCode = trip, totalSeats = 10, available = 8))
         reservations.save(
             Reservation(
-                orderId = "order-stranded", productId = "TRENO-TEST", qty = 2,
+                orderId = "order-stranded", tripCode = trip, qty = 2,
                 status = ReservationStatus.RESERVED,
                 createdAt = Instant.now().minusSeconds(600),
                 expiresAt = Instant.now().minusSeconds(300),
@@ -141,16 +189,19 @@ class InventoryServiceTest {
         val swept = service.expireOverdue(Instant.now())
 
         assertEquals(1, swept)
-        assertEquals(10, available("TRENO-TEST"))
+        assertEquals(10, available(trip))
+        assertEquals(0, outbox.count(), "the reconciler sweep emits no reply (no order is waiting on it)")
         assertEquals(
             ReservationStatus.EXPIRED,
-            reservations.findByOrderIdAndProductId("order-stranded", "TRENO-TEST")!!.status,
+            requireNotNull(reservations.findByOrderIdAndTripCode("order-stranded", trip)) {
+                "expected a swept reservation for order-stranded/$trip"
+            }.status,
         )
     }
 
-    // Verifies reserving an unknown product raises a not-found domain error (becomes a 404)
+    // Verifies reserving an unknown trip raises a not-found domain error (becomes a 404 / a DLT-bound poison message)
     @Test
-    fun `unknown product is a 404-style domain error`() {
-        assertFailsWith<NoSuchElementException> { service.reserve("order-1", "NO-SUCH-TRAIN", 1) }
+    fun `unknown trip is a 404-style domain error`() {
+        assertFailsWith<NoSuchElementException> { service.reserve("order-1", "NO-SUCH-TRIP", 1) }
     }
 }

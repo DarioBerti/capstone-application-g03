@@ -1,0 +1,12 @@
+<!--
+  Silent SSO check page for keycloak-js. Loaded in a hidden iframe during init({ onLoad: 'check-sso' });
+  it just relays the auth result back to the main window. Must be served same-origin (Vite serves
+  everything under public/ at the web root).
+-->
+<html>
+  <body>
+    <script>
+      parent.postMessage(location.href, location.origin)
+    </script>
+  </body>
+</html>

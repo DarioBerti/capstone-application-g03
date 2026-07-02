@@ -241,7 +241,7 @@ The Pillar‑B proofs (`InventoryConcurrencyTest`, `PaymentsServiceTest` race te
 **H2 with Hibernate‑generated schema**, not the Flyway Postgres schema. So the `CHECK (available >= 0)`, the
 `UNIQUE` constraints, the FK, and the partial index from `db/migration/V1__baseline.sql` are **never tested**, and
 the concurrency invariants are validated on an engine whose locking/MVCC differs from Postgres. `ddl-auto: validate`
-on the postgres profile only runs in‑cluster — a mapping drift wouldn't be caught by CI.
+on the cluster profile only runs in‑cluster — a mapping drift wouldn't be caught by CI.
 
 **Fix:** run the consistency tests against **Testcontainers‑Postgres** with Flyway enabled. Also add coverage
 tooling (Kover/JaCoCo) — there is no coverage gate, despite the 80% target.
