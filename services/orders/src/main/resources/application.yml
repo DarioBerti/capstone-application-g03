@@ -81,6 +81,14 @@ app:
     deadline: PT2M
 
 management:
+  # Fase 4: emit http.server.requests histogram buckets so p99 (RED/SLO), exemplar->trace, and the
+  # canary p99 analysis gate work. Bracketed key = Spring relaxed-binding for a map key holding dots.
+  metrics:
+    distribution:
+      percentiles-histogram:
+        "[http.server.requests]": true
+      maximum-expected-value:
+        "[http.server.requests]": 2s
   endpoints:
     web:
       exposure:
