@@ -12,27 +12,27 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * The saga aggregate. Reply-driven async Kafka state machine (Pillar A/B/C):
+ * The booking aggregate. A booking is one journey — an OUTBOUND leg (required) plus an optional RETURN leg (see
+ * [OrderLeg]); the legs, not the order, carry trip/qty. Two-phase, human-gated async Kafka state machine:
  *
- *   PENDING --reservation RESERVED--> RESERVED --payment AUTHORIZED--> AUTHORIZED --payment-captured--> CONFIRMED
- *      |                                  |                                |
- *      |-- reservation SOLD_OUT --> REJECTED(SOLD_OUT)                     |
- *                                         |-- payment DECLINED --> REJECTED(PAYMENT_DECLINED) (+release-seats)
- *                                                                          |-- seats EXPIRED --> REJECTED(RESERVATION_EXPIRED) (+cancel-authorization)
+ *   DRAFT --add first leg--> HELD --pay (in window)--> PAYING --payment AUTHORIZED--> AUTHORIZED --captured--> CONFIRMED
+ *     (empty)  (reserve-on-add, expiresAt stamped)         |                               |
+ *                                                          |-- DECLINED --> REJECTED(PAYMENT_DECLINED)
+ *                                                                                          |-- a leg EXPIRED --> REJECTED(RESERVATION_EXPIRED)
+ *   HELD/PAYING --checkout window elapses--> REJECTED(EXPIRED_NO_PAYMENT | SERVICE_UNAVAILABLE)
  *
- * Each edge is taken by a reply from Inventory/Payments; the order EMITS the next command (via the outbox) and
- * waits. PENDING = "reserve-seats sent, awaiting reservation-result"; AUTHORIZED additionally covers
- * "confirm-seats sent, awaiting seats-confirmed" then "capture-payment sent, awaiting payment-captured" — the
- * capture-last design, so a hold that expires before confirm only cancels the funds hold (no capture, no refund).
+ * The hold window is BACKEND-authoritative: `expiresAt` is stamped when the first leg is added, re-checked
+ * server-side at pay, and enforced by CheckoutExpirySweeper. `paymentInitiatedAt` (stamped at pay) is the
+ * dual-cause key at expiry: null = the user never paid (EXPIRED_NO_PAYMENT); non-null = pay was accepted but the
+ * pipeline stalled (SERVICE_UNAVAILABLE).
  *
- * PENDING/RESERVED/AUTHORIZED are RESUMABLE states: a lost reply is re-driven by [OrderTimeoutSweeper], which
- * re-emits the command for the current state (every command is idempotent downstream). CONFIRMED/REJECTED are
- * terminal: a redelivered reply on a terminal/advanced order is a no-op (the per-transition status guard).
+ * PAYING/AUTHORIZED are the RESUMABLE post-pay saga states re-driven by [OrderTimeoutSweeper] on a lost reply
+ * (idempotent commands make a re-send safe); a HELD booking awaiting the USER is not "stuck" and is never
+ * re-driven — only the checkout window expires it. CONFIRMED/REJECTED are terminal.
  *
- * Identity: surrogate `id` UUID (app-assigned, no shared sequence). `buyer_sub` records WHO placed the
- * order (the Keycloak subject); `buyer_email` is a snapshot of the buyer's email from the JWT at placement
- * time (used as the notification recipient — no money-path call to Users). `idempotency_key` is the
- * client-supplied key that makes a retried POST replay instead of creating a duplicate.
+ * `amount_cents` is a derived cache (Σ held legs), recomputed as legs change and at pay; 0 for an empty DRAFT.
+ * Identity: surrogate `id` UUID. `buyer_sub`/`buyer_email` snapshot WHO placed the order (Keycloak sub + email
+ * from the JWT). `idempotency_key` makes a retried create replay instead of duplicating.
  *
  * Plain `class`, not `data class` — a JPA-managed entity has identity, not value, semantics (root CLAUDE.md).
  */
@@ -45,14 +45,9 @@ class Order(
     @Id
     val id: UUID = UUID.randomUUID(),
 
-    @Column(name = "trip_code", nullable = false, length = 64)
-    val tripCode: String = "",
-
-    @Column(nullable = false)
-    val qty: Int = 0,
-
+    // Derived cache of the booking total: Σ (qty × unitPriceCents) over the HELD legs; 0 while the order is an empty DRAFT
     @Column(name = "amount_cents", nullable = false)
-    val amountCents: Long = 0,
+    var amountCents: Long = 0,
 
     @Column(nullable = false, length = 3)
     val currency: String = "EUR",
@@ -68,11 +63,19 @@ class Order(
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
-    var status: OrderStatus = OrderStatus.PENDING,
+    var status: OrderStatus = OrderStatus.DRAFT,
 
     @Enumerated(EnumType.STRING)
     @Column(name = "rejection_reason", length = 32)
     var rejectionReason: RejectionReason? = null,
+
+    // Hold-window deadline: stamped now+window when the FIRST leg is added; null for an empty DRAFT. Backend owns expiry.
+    @Column(name = "expires_at")
+    var expiresAt: Instant? = null,
+
+    // When the user triggered pay (authorize-payment emitted); the dual-cause key at window expiry. Null until pay.
+    @Column(name = "payment_initiated_at")
+    var paymentInitiatedAt: Instant? = null,
 
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
@@ -80,14 +83,21 @@ class Order(
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Instant = Instant.now(),
 
-    // Optimistic-lock guard (Pillar C): the timeout sweeper adds a SECOND saga driver alongside reply redelivery, so a re-drive and an in-flight reply can race on the same order. @Version makes the loser of a concurrent terminal transition fail at commit (ObjectOptimisticLockingFailureException → rollback) instead of appending a duplicate order-confirmed/notification to the outbox. JPA manages the column; never set it by hand.
+    // Optimistic-lock guard (Pillar C): the timeout/expiry sweepers add a SECOND driver alongside reply redelivery, so a re-drive and an in-flight reply can race on the same order. @Version makes the loser of a concurrent transition fail at commit (ObjectOptimisticLockingFailureException → rollback) instead of duplicating outbox events. JPA manages the column; never set it by hand.
     @Version
     @Column(nullable = false)
     var version: Long = 0,
 )
 
-// saga states: PENDING/RESERVED/AUTHORIZED are resumable, CONFIRMED/REJECTED are terminal
-enum class OrderStatus { PENDING, RESERVED, AUTHORIZED, CONFIRMED, REJECTED }
+// Booking states: DRAFT (empty) + HELD (legs reserved, awaiting the user) are pre-pay; PAYING/AUTHORIZED are the
+// resumable post-pay saga states; CONFIRMED/REJECTED are terminal.
+enum class OrderStatus { DRAFT, HELD, PAYING, AUTHORIZED, CONFIRMED, REJECTED }
 
 // mutually-exclusive reasons an order can end up REJECTED
-enum class RejectionReason { SOLD_OUT, PAYMENT_DECLINED, RESERVATION_EXPIRED }
+enum class RejectionReason {
+    SOLD_OUT,            // the outbound leg could not be held at reserve time (a sold-out RETURN is a one-way fallback, not a rejection)
+    PAYMENT_DECLINED,    // the PSP declined the charge
+    RESERVATION_EXPIRED, // a held leg's hold lapsed before confirm (mid-saga)
+    EXPIRED_NO_PAYMENT,  // the checkout window elapsed and the user never paid (user inaction)
+    SERVICE_UNAVAILABLE, // pay was accepted but the pipeline stayed stuck until the window elapsed (system fault)
+}

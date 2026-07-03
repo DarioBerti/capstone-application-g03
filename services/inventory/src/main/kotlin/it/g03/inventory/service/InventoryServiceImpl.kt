@@ -104,20 +104,24 @@ class InventoryServiceImpl(
     }
 
     /**
-     * Saga compensation (payment failed/aborted): RESERVED → RELEASED + restock. No reply — Orders is already
-     * rejecting when it sends release-seats, so it is not waiting on an answer.
-     * Idempotent: releasing an already-terminal reservation replays the stored outcome.
+     * Saga compensation (payment failed/aborted, or a round-trip booking partially expired): RESERVED → RELEASED
+     * OR CONFIRMED → RELEASED, restocking the seats. The CONFIRMED path exists for the multi-leg all-or-nothing
+     * case — if one leg of a booking expires at confirm, Orders releases the sibling leg(s) it had already
+     * confirmed, un-selling them. No reply — Orders is already rejecting when it sends release-seats.
+     * Idempotent: releasing an already-terminal (RELEASED/EXPIRED/REJECTED) reservation is a no-op replay; the
+     * additive restock happens after the status flip and is @Version-guarded against a concurrent second release.
      */
     @Transactional  // status flip + restock commit atomically
     override fun release(orderId: String, tripCode: String): Reservation {
         val r = reservations.findByOrderIdAndTripCode(orderId, tripCode)
             ?: throw NoSuchElementException("no reservation for order=$orderId trip=$tripCode")
-        if (r.status == ReservationStatus.RESERVED) {
+        if (r.status == ReservationStatus.RESERVED || r.status == ReservationStatus.CONFIRMED) {
+            val wasConfirmed = r.status == ReservationStatus.CONFIRMED
             r.status = ReservationStatus.RELEASED
             r.releasedAt = Instant.now()
             reservations.save(r) // explicit save: restock() flushes+clears the context
             items.restock(r.tripCode, r.qty)
-            log.info("released reservation for order={} trip={} (restocked {})", orderId, tripCode, r.qty)
+            log.info("released {} reservation for order={} trip={} (restocked {})", if (wasConfirmed) "CONFIRMED" else "RESERVED", orderId, tripCode, r.qty)
         }
         return r
     }
@@ -149,13 +153,13 @@ class InventoryServiceImpl(
     // Reply to a reserve-seats command via the outbox (REJECTED -> SOLD_OUT, every other outcome means seats were held -> RESERVED)
     private fun appendReservationResult(r: Reservation) {
         val status = if (r.status == ReservationStatus.REJECTED) STATUS_SOLD_OUT else STATUS_RESERVED
-        outbox.append(Topics.RESERVATION_RESULT, r.orderId, ReservationResultEvent(orderId = r.orderId, status = status))
+        outbox.append(Topics.RESERVATION_RESULT, r.orderId, ReservationResultEvent(orderId = r.orderId, tripCode = r.tripCode, status = status))
     }
 
     // Reply to a confirm-seats command via the outbox (CONFIRMED -> seats sold, anything else means the hold lapsed -> EXPIRED)
     private fun appendSeatsConfirmed(r: Reservation) {
         val status = if (r.status == ReservationStatus.CONFIRMED) STATUS_CONFIRMED else STATUS_EXPIRED
-        outbox.append(Topics.SEATS_CONFIRMED, r.orderId, SeatsConfirmedEvent(orderId = r.orderId, status = status))
+        outbox.append(Topics.SEATS_CONFIRMED, r.orderId, SeatsConfirmedEvent(orderId = r.orderId, tripCode = r.tripCode, status = status))
     }
 
     private companion object {

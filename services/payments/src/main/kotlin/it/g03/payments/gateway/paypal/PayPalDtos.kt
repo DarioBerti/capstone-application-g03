@@ -17,11 +17,27 @@ data class CreateOrderRequest(
     @JsonProperty("payment_source") val paymentSource: PaymentSource,
 )
 
-data class PurchaseUnit(val amount: Amount)
+data class PurchaseUnit(
+    val amount: Amount,
+    // WHAT the buyer is purchasing (booking legs). Null = authorize the total alone. When present, PayPal requires
+    // amount.breakdown.item_total to equal the sum of items (name/quantity/unit_amount) — the gateway sets both.
+    val items: List<Item>? = null,
+)
 
 data class Amount(
     @JsonProperty("currency_code") val currencyCode: String,
     val value: String,
+    val breakdown: Breakdown? = null,
+)
+
+data class Breakdown(
+    @JsonProperty("item_total") val itemTotal: Amount,
+)
+
+data class Item(
+    val name: String,
+    val quantity: String,
+    @JsonProperty("unit_amount") val unitAmount: Amount,
 )
 
 data class PaymentSource(val card: Card)

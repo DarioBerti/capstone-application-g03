@@ -23,18 +23,28 @@ The team owns the judgments; agents only produce artifacts (see Agentic policy).
 | `payments` | Authorizes then captures payment; **must not double-charge** | Async Kafka commands/replies, strict idempotency | dedicated CNPG |
 | `notifications` | Sends confirmations | Fully async; **must fail without failing checkout** | none (stateless) |
 
-**The money path** (place order → reserve inventory → authorize payment → confirm) is the critical
-path. SLOs, dashboards, tracing, and chaos experiments all center on it.
+**The money path** is a two-phase, human-gated **booking**: create a DRAFT → add an outbound leg (required)
+plus an optional return leg — each add **reserves seats on-add** and the first starts a backend-owned hold
+window → **pay** within the window → the saga confirms every held leg and captures once → CONFIRMED. A booking
+is one journey (a one-way or round-trip), at most two legs. SLOs, dashboards, tracing, and chaos experiments
+all center on it.
 
 - North-south entry: a single API gateway/ingress (Traefik).
-- Sync APIs: client → gateway → Catalog/Orders (browsing + the `POST /api/orders` accept). The money path
+- Sync APIs: client → gateway → Catalog/Orders (browsing + the booking intake: `POST /api/orders` create,
+  `POST /{id}/legs` add-leg, `DELETE /{id}/legs/{legId}`, `POST /{id}/pay`). The pay/confirm/capture flow
   itself is **fully async**: Orders drives Inventory/Payments over Kafka commands + replies, not HTTP.
-- Async: **Kafka (Strimzi operator)** for the order pipeline and all eventing. The saga is an orchestrated
-  command/reply pipeline (Orders = orchestrator). Topics in use: `order-placed` (trigger); commands
-  `reserve-seats`, `authorize-payment`, `confirm-seats`, `capture-payment`, `release-seats`,
-  `cancel-authorization`; replies `reservation-result`, `payment-result`, `seats-confirmed`,
-  `payment-captured`; terminal/notify `order-confirmed`, `order-rejected`, `notification-requested`; and a
-  dead-letter topic per consuming service (`orders-dlt`, `inventory-dlt`, `payments-dlt`).
+- The hold window is **backend-authoritative** (`expires_at` on the order; re-checked at pay and swept by a
+  give-up sweeper — the frontend countdown is display-only). At window expiry the reason is dual-cause on a
+  stored `payment_initiated_at`: `EXPIRED_NO_PAYMENT` (the user never paid) vs `SERVICE_UNAVAILABLE` (pay was
+  accepted but the pipeline stalled).
+- Async: **Kafka (Strimzi operator)** for the pipeline and all eventing. The saga is an orchestrated
+  command/reply pipeline (Orders = orchestrator), triggered by the synchronous add-leg (reserve) and pay
+  (authorize) — there is no `order-placed` trigger. Commands `reserve-seats`, `authorize-payment`,
+  `confirm-seats`, `capture-payment`, `release-seats`, `cancel-authorization`; replies `reservation-result`,
+  `payment-result`, `seats-confirmed`, `payment-captured` (reservation/confirm replies carry the `tripCode` so
+  a multi-leg booking maps each reply to its leg); terminal/notify `order-confirmed`, `order-rejected`,
+  `notification-requested`; and a dead-letter topic per consuming service (`orders-dlt`, `inventory-dlt`,
+  `payments-dlt`).
 
 ## General rules
 - When editing or creating code files, do NOT add useless comments in any circumstance. The only comments which can be considered useful are the following:
@@ -218,10 +228,12 @@ fun list(filter: ProductFilter, pageable: Pageable): Page<ProductResponse> =
 - Return `Page<Dto>`, never `Page<Entity>`.
 
 ### Money-path correctness (Pillars A & B)
-- **Idempotency is mandatory**: a duplicated `order-placed` event or a retried payment authorization
-  must not double-reserve or double-charge. The codebase enforces this with DB constraints
-  (`UNIQUE(order_id)` in Payments, `UNIQUE(order_id, trip_code)` in Inventory) + fast-path replay;
-  Orders uses a **transactional outbox** so the business change and its event commit atomically.
+- **Idempotency is mandatory**: a redelivered reservation/payment reply or a re-driven command must not
+  double-reserve, double-charge, or double-capture. The codebase enforces this with DB constraints
+  (`UNIQUE(order_id)` in Payments, `UNIQUE(order_id, trip_code)` in Inventory and Orders' `order_legs`) +
+  fast-path replay + per-order/per-leg status guards; Orders uses a **transactional outbox** so the business
+  change and its command/reply commit atomically. Payments also keeps a `cancel-authorization` **VOIDED
+  tombstone** so a compensation wins the race against a stale `authorize-payment` on the separate topic.
 - **Inventory invariant: never oversell.** Reservation is an atomic conditional decrement; two
   customers cannot buy the last seat. Document the CAP/PACELC choice in `inventory`'s CLAUDE.md.
 - **Async lifecycle**: when you *do* run background coroutines, a `CoroutineScope` is a failure domain

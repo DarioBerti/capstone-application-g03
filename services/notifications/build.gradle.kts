@@ -20,10 +20,14 @@ repositories {
 }
 
 dependencies {
-	// Minimal web surface: only to expose Actuator probes/metrics. No business REST API
+	// Minimal web surface: Actuator probes/metrics + the SSE stream that relays saga updates to the browser
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("tools.jackson.module:jackson-module-kotlin")
+
+	// The SSE endpoint is per-user, so it validates the caller's Keycloak token like the other resource servers
+	// (the only authenticated surface on this otherwise Kafka-only edge service).
+	implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
 
 	// Fully asynchronous: Kafka consumer + coroutines. Notifications owns (almost) no state. The starter
 	// pulls in spring-kafka AND Boot 4's Kafka auto-configuration (module spring-boot-kafka) — bare

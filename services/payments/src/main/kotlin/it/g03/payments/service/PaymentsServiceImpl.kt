@@ -6,6 +6,7 @@ import it.g03.payments.events.PaymentCapturedEvent
 import it.g03.payments.events.PaymentResultEvent
 import it.g03.payments.events.Topics
 import it.g03.payments.gateway.AuthorizationResult
+import it.g03.payments.gateway.LineItem
 import it.g03.payments.gateway.PaymentGateway
 import it.g03.payments.repository.PaymentAuthorizationRepository
 import io.micrometer.core.instrument.MeterRegistry
@@ -49,10 +50,19 @@ class PaymentsServiceImpl(
      * re-emitting on redelivery is the at-least-once recovery mechanism — Orders' handler is idempotent.
      */
     @Transactional   // run the whole method in a single database transaction (all-or-nothing)
-    override fun authorize(orderId: String, amountCents: Long): AuthorizeOutcome {
+    override fun authorize(orderId: String, amountCents: Long, items: List<LineItem>): AuthorizeOutcome {
         require(amountCents > 0) { "amountCents must be positive" }
 
         authorizations.findByOrderId(orderId)?.let {
+            // A VOIDED row is a cancellation tombstone (or a genuinely voided hold): the order was cancelled/expired,
+            // so refuse to charge and reply DECLINED. This is what makes a cancel-authorization win the race against a
+            // stale authorize-payment on the separate topic — see cancelAuthorization's tombstone insert below.
+            if (it.status == AuthorizationStatus.VOIDED) {
+                outcomes("refused_voided").increment()
+                appendPaymentResult(orderId, "DECLINED")
+                log.info("authorize refused for order={} -> already VOIDED (cancellation tombstone)", orderId)
+                return AuthorizeOutcome(it, replayed = true)
+            }
             outcomes("replayed").increment()
             appendPaymentResult(orderId, resultStatus(it))
             log.info("authorize replay for order={} -> {}", orderId, it.status)
@@ -64,7 +74,7 @@ class PaymentsServiceImpl(
         // business outcome; a transient transport failure throws (TransientPspException) so this transaction
         // rolls back and the Kafka retry/DLT/sweeper path re-drives.
         val auth = PaymentAuthorization(orderId = orderId, amountCents = amountCents)
-        when (val result = gateway.authorize(orderId, amountCents, auth.currency)) {
+        when (val result = gateway.authorize(orderId, amountCents, auth.currency, items)) {
             is AuthorizationResult.Authorized -> {
                 auth.status = AuthorizationStatus.AUTHORIZED
                 auth.pspReference = result.pspReference
@@ -125,14 +135,14 @@ class PaymentsServiceImpl(
     /**
      * Compensation: release a previously placed HOLD — AUTHORIZED -> VOIDED, stamping voided_at. No money moved
      * (the hold was never captured), no reply (Orders is already rejecting the order). Idempotent, keyed by
-     * orderId: a missing row is a domain not-found (the saga only cancels after an AUTHORIZED reply); an already-
-     * VOIDED row replays; a DECLINED row is a no-op (nothing was held); a CAPTURED row is a defensive no-op (the
-     * funds were already taken — a release here would need a refund, out of scope, and the saga never reaches it).
+     * orderId: a missing row inserts a VOIDED tombstone (see [insertVoidTombstone]) so a later stale
+     * authorize-payment refuses to charge; an already-VOIDED row replays; a DECLINED row is a no-op (nothing was
+     * held); a CAPTURED row is a defensive no-op (the funds were already taken — a release here would need a
+     * refund, out of scope, and the saga never reaches it).
      */
     @Transactional
     override fun cancelAuthorization(orderId: String): CancelOutcome {
-        val auth = authorizations.findByOrderId(orderId)
-            ?: throw NoSuchElementException("no authorization for order=$orderId")
+        val auth = authorizations.findByOrderId(orderId) ?: return insertVoidTombstone(orderId)
         return when (auth.status) {
             AuthorizationStatus.AUTHORIZED -> {
                 val pspRef = requireNotNull(auth.pspReference) {
@@ -162,6 +172,24 @@ class PaymentsServiceImpl(
                 CancelOutcome(auth, replayed = true)
             }
         }
+    }
+
+    // No authorization row yet, but the order is being cancelled/expired: insert a VOIDED tombstone so a later,
+    // stale authorize-payment (separate topic, no ordering) finds it and refuses to charge. UNIQUE(order_id) is the
+    // arbiter — if an authorize is inserting concurrently, exactly one insert commits and the loser rolls back and
+    // is re-driven (converging to VOIDED either way; no dangling hold). No reply: Orders is already rejecting.
+    private fun insertVoidTombstone(orderId: String): CancelOutcome {
+        val tombstone = authorizations.save(
+            PaymentAuthorization(
+                orderId = orderId,
+                amountCents = 0,
+                status = AuthorizationStatus.VOIDED,
+                voidedAt = Instant.now(),
+            ),
+        )
+        cancelOutcomes("tombstoned").increment()
+        log.info("cancelAuthorization order={} -> no prior hold, inserted VOIDED tombstone", orderId)
+        return CancelOutcome(tombstone, replayed = false)
     }
 
     // Looks up the single authorization for an order, or raises a domain not-found error

@@ -10,10 +10,17 @@ package it.g03.payments.gateway
  * path re-drives; [PspException] for terminal ones.
  */
 interface PaymentGateway {
-    fun authorize(orderId: String, amountCents: Long, currency: String): AuthorizationResult
+    fun authorize(orderId: String, amountCents: Long, currency: String, items: List<LineItem> = emptyList()): AuthorizationResult
     fun capture(orderId: String, pspReference: String): CaptureResult
     fun void(orderId: String, pspReference: String)
 }
+
+/**
+ * A line item the PSP records (WHAT the buyer is purchasing) — a booking leg. Optional: an empty list authorizes
+ * the total amount alone (as before). When present, PayPal shows the products and validates that the items sum to
+ * the order amount, so the caller must keep them consistent (Orders builds both from the same reserved legs).
+ */
+data class LineItem(val name: String, val quantity: Int, val unitAmountCents: Long)
 
 sealed interface AuthorizationResult {
     /** The PSP placed a HOLD; [pspReference] is the authorization id to capture/void later. */

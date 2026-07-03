@@ -20,6 +20,11 @@ not double-charge** (Pillar B).
   Enforce with a **uniqueness constraint on the order key** plus fast-path replay of the stored
   outcome; on a concurrent race, exactly one insert commits and the loser rolls back (charge included)
   and replays. Don't weaken this to a check-then-insert.
+- **Compensation is order-independent (cancel tombstone).** `cancel-authorization` and `authorize-payment`
+  arrive on **separate topics with no cross-topic ordering**. A cancel for an order with no prior
+  authorization inserts a **VOIDED tombstone** (amount 0) instead of failing; a later `authorize` that finds
+  a VOIDED row refuses to charge and replies DECLINED. Either ordering converges to VOIDED — never a dangling
+  AUTHORIZED hold. `UNIQUE(order_id)` is the arbiter (no `@Version` needed: every case is an insert race).
 - **DECLINED is a business outcome, not an error.** A processor decline is a valid AUTHORIZED/DECLINED
   result the saga branches on — never an exception. A **transient** transport failure (5xx / timeout /
   network) is the opposite: throw `TransientPspException` so the transaction rolls back and the Kafka

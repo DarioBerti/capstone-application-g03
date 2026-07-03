@@ -152,6 +152,20 @@ class InventoryServiceTest {
         assertTrue(seatsConfirmedStatusOf("order-1").isEmpty(), "release never emits seats-confirmed")
     }
 
+    // Verifies the round-trip partial-expiry compensation: releasing an ALREADY-CONFIRMED reservation un-sells it
+    // (restocks) exactly once and is idempotent. Orders uses this to give back a leg it had confirmed when a
+    // sibling leg of the booking expires.
+    @Test
+    fun `release of a CONFIRMED reservation restocks the sale and is idempotent`() {
+        service.reserve("order-1", trip, 2)
+        service.confirm("order-1", trip) // firm sale: 8 left, not restocked
+        assertEquals(8, available(trip))
+
+        assertEquals(ReservationStatus.RELEASED, service.release("order-1", trip).status)
+        assertEquals(ReservationStatus.RELEASED, service.release("order-1", trip).status) // redelivery
+        assertEquals(10, available(trip), "a released CONFIRMED sale restocks exactly once")
+    }
+
     // Verifies the slow-payment race: a confirm arriving after the TTL expires the hold, restocks, and replies EXPIRED (never a stale confirm)
     @Test
     fun `confirm after TTL expires the hold, restocks, and replies EXPIRED (slow-payment race)`() {

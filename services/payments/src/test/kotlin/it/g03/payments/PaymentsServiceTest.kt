@@ -1,6 +1,7 @@
 package it.g03.payments
 
 import it.g03.payments.entities.AuthorizationStatus
+import it.g03.payments.events.PaymentResultEvent
 import it.g03.payments.events.Topics
 import it.g03.payments.repository.OutboxEventRepository
 import it.g03.payments.repository.PaymentAuthorizationRepository
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
+import tools.jackson.databind.ObjectMapper
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -39,6 +41,8 @@ class PaymentsServiceTest {
     @Autowired lateinit var repository: PaymentAuthorizationRepository
     // Injects the outbox repository to assert the saga reply was appended in the same transaction
     @Autowired lateinit var outbox: OutboxEventRepository
+    // Injects the ObjectMapper to read a reply payload (assert the tombstone guard replies DECLINED)
+    @Autowired lateinit var objectMapper: ObjectMapper
 
     // Thread pool used to fire concurrent duplicate authorizations in the race test
     private val pool = Executors.newFixedThreadPool(8)
@@ -55,6 +59,11 @@ class PaymentsServiceTest {
     }
 
     private fun outboxCount(topic: String) = outbox.findAll().count { it.topic == topic }
+
+    // Deserialises every payment-result reply's status (used to assert the tombstone guard replies DECLINED)
+    private fun paymentResultStatuses(): List<String> =
+        outbox.findAll().filter { it.topic == Topics.PAYMENT_RESULT }
+            .map { objectMapper.readValue(it.payload, PaymentResultEvent::class.java).status }
 
     // --- authorize: phase 1 is a HOLD ---------------------------------------------------------------------------
 
@@ -201,10 +210,63 @@ class PaymentsServiceTest {
         assertEquals(AuthorizationStatus.DECLINED, outcome.authorization.status, "a declined authorization stays DECLINED")
     }
 
-    // Verifies the defensive not-found path: cancelling an order with no authorization is a domain not-found (-> 404)
+    // --- cancel tombstone + authorize guard (the cross-topic race prerequisite) --------------------------------
+
+    // Verifies the tombstone: cancelling an order with no prior authorization inserts a VOIDED tombstone (amount 0)
+    // so a later stale authorize-payment (separate topic, no ordering) will find it and refuse to charge.
     @Test
-    fun `cancelAuthorization of an unknown order raises not-found`() {
-        assertFailsWith<NoSuchElementException> { service.cancelAuthorization("order-unknown") }
+    fun `cancelAuthorization of an unknown order inserts a VOIDED tombstone`() {
+        val outcome = service.cancelAuthorization("order-ghost")
+
+        assertEquals(false, outcome.replayed)
+        assertEquals(AuthorizationStatus.VOIDED, outcome.authorization.status)
+        assertEquals(0, outcome.authorization.amountCents, "a tombstone charges nothing")
+        assertNotNull(outcome.authorization.voidedAt)
+        assertEquals(1, repository.count(), "the tombstone is the single row for this order")
+    }
+
+    // Verifies the guard (cancel-before-authorize): an authorize arriving AFTER a tombstone refuses to charge and
+    // replies DECLINED — no new row, no PSP charge, the tombstone wins.
+    @Test
+    fun `authorize after a cancel tombstone refuses and replies DECLINED`() {
+        service.cancelAuthorization("order-ghost")   // tombstone first
+
+        val outcome = service.authorize("order-ghost", 5_000)
+
+        assertTrue(outcome.replayed, "authorize must not charge over a tombstone")
+        assertEquals(AuthorizationStatus.VOIDED, outcome.authorization.status)
+        assertNull(outcome.authorization.pspReference, "nothing was authorized -> no PSP reference")
+        assertEquals(1, repository.count(), "no second row is created")
+        assertEquals(listOf("DECLINED"), paymentResultStatuses(), "the saga is told the payment will not happen")
+    }
+
+    // Verifies the tombstone itself is idempotent: a redelivered cancel over a tombstone is a no-op replay
+    @Test
+    fun `cancel over an existing tombstone is an idempotent replay`() {
+        service.cancelAuthorization("order-ghost")
+        val replay = service.cancelAuthorization("order-ghost")
+
+        assertTrue(replay.replayed)
+        assertEquals(AuthorizationStatus.VOIDED, replay.authorization.status)
+        assertEquals(1, repository.count())
+    }
+
+    // Verifies convergence under the cross-topic race: authorize and cancel fired concurrently, then each re-driven
+    // once (Kafka at-least-once), always settle on a single VOIDED row — never a dangling AUTHORIZED hold.
+    @Test
+    fun `concurrent authorize and cancel converge to a single VOIDED row`() {
+        val start = CountDownLatch(1)
+        val a = pool.submit(Callable { start.await(); runCatching { service.authorize("order-race", 5_000) } })
+        val c = pool.submit(Callable { start.await(); runCatching { service.cancelAuthorization("order-race") } })
+        start.countDown()
+        a.get(); c.get()
+
+        // redelivery of the loser (whichever rolled back on the UNIQUE race) drives convergence
+        runCatching { service.cancelAuthorization("order-race") }
+        runCatching { service.authorize("order-race", 5_000) }
+
+        assertEquals(1, repository.count(), "exactly one row per order")
+        assertEquals(AuthorizationStatus.VOIDED, service.find("order-race").status, "no dangling AUTHORIZED hold")
     }
 
     // --- outbox replies committed in the same transaction -------------------------------------------------------

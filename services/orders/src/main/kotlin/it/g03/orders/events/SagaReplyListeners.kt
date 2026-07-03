@@ -25,7 +25,7 @@ class SagaReplyListeners(
     @KafkaListener(topics = [Topics.RESERVATION_RESULT], autoStartup = "\${app.kafka-listeners-enabled:true}")
     fun onReservationResult(payload: String) {
         val event = objectMapper.readValue(payload, ReservationResultEvent::class.java)
-        saga.onReservationResult(UUID.fromString(event.orderId), event.status)
+        saga.onReservationResult(UUID.fromString(event.orderId), event.tripCode, event.status)
     }
 
     @KafkaListener(topics = [Topics.PAYMENT_RESULT], autoStartup = "\${app.kafka-listeners-enabled:true}")
@@ -37,7 +37,7 @@ class SagaReplyListeners(
     @KafkaListener(topics = [Topics.SEATS_CONFIRMED], autoStartup = "\${app.kafka-listeners-enabled:true}")
     fun onSeatsConfirmed(payload: String) {
         val event = objectMapper.readValue(payload, SeatsConfirmedEvent::class.java)
-        saga.onSeatsConfirmed(UUID.fromString(event.orderId), event.status)
+        saga.onSeatsConfirmed(UUID.fromString(event.orderId), event.tripCode, event.status)
     }
 
     @KafkaListener(topics = [Topics.PAYMENT_CAPTURED], autoStartup = "\${app.kafka-listeners-enabled:true}")

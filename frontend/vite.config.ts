@@ -18,6 +18,8 @@ export default defineConfig({
       '/api/inventory': port('INVENTORY_PORT', 8081),
       '/api/payments': port('PAYMENTS_PORT', 8082),
       '/api/users': port('USERS_PORT', 8085),
+      // The SSE stream that pushes booking updates to the browser (http-proxy streams text/event-stream as-is).
+      '/api/notifications': port('NOTIFICATIONS_PORT', 8084),
     },
   },
 })

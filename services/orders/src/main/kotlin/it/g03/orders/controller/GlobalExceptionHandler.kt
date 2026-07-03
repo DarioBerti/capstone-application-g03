@@ -4,6 +4,8 @@ import io.github.resilience4j.ratelimiter.RateLimiterRegistry
 import io.github.resilience4j.ratelimiter.RequestNotPermitted
 import io.micrometer.core.instrument.MeterRegistry
 import it.g03.orders.dto.ErrorResponse
+import it.g03.orders.service.BookingNotPayableException
+import it.g03.orders.service.CheckoutWindowExpiredException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
@@ -44,6 +46,17 @@ class GlobalExceptionHandler(
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
             ErrorResponse(e.bindingResult.fieldErrors.joinToString(", ") { "${it.field}: ${it.defaultMessage}" }),
         )
+
+    // A well-formed request against a booking in the wrong state (add/remove a leg on a non-editable order) → 409.
+    @ExceptionHandler(IllegalStateException::class)
+    fun illegalState(e: IllegalStateException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(e.message))
+
+    // The hold window elapsed before pay, or the booking isn't payable yet (still settling / no reserved outbound)
+    // → 409 Conflict: the request is well-formed but the booking's state doesn't allow it.
+    @ExceptionHandler(CheckoutWindowExpiredException::class, BookingNotPayableException::class)
+    fun notPayable(e: RuntimeException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(e.message))
 
     /**
      * A concurrent POST that loses the UNIQUE(idempotency_key) race → 409 Conflict. The common sequential

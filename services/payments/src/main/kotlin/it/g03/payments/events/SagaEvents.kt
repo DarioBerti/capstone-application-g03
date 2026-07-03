@@ -16,9 +16,15 @@ import java.util.UUID
 data class AuthorizePaymentCommand(
     val orderId: String,
     val amountCents: Long,
+    // The booking legs, for the PSP to record the products. Defaulted empty for backward-compat with any
+    // pre-line-items producer (authorize then falls back to charging the amount alone).
+    val items: List<PaymentLineItem> = emptyList(),
     val eventId: UUID = UUID.randomUUID(),
     val occurredAt: Instant = Instant.now(),
 )
+
+// One line item of an authorize-payment (a booking leg): what the buyer is purchasing.
+data class PaymentLineItem(val name: String, val quantity: Int, val unitAmountCents: Long)
 
 // capture-payment: capture the funds previously held by authorize-payment
 data class CapturePaymentCommand(

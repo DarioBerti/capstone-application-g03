@@ -1,6 +1,8 @@
 package it.g03.payments
 
 import it.g03.payments.gateway.AuthorizationResult
+import it.g03.payments.gateway.LineItem
+import it.g03.payments.gateway.PaymentGateway
 import it.g03.payments.gateway.TransientPspException
 import it.g03.payments.gateway.paypal.PayPalPaymentGateway
 import it.g03.payments.gateway.paypal.PayPalTokenProvider
@@ -32,7 +34,8 @@ class PayPalPaymentGatewayTest {
     private val base = "https://api-m.sandbox.paypal.com"
 
     private lateinit var server: MockRestServiceServer
-    private lateinit var gateway: PayPalPaymentGateway
+    // Typed as the interface so calls use the default (empty) items where a test doesn't care about line items.
+    private lateinit var gateway: PaymentGateway
 
     @BeforeEach
     fun setUp() {
@@ -71,6 +74,31 @@ class PayPalPaymentGatewayTest {
 
         val authorized = assertIs<AuthorizationResult.Authorized>(result)
         assertEquals("AUTH-9", authorized.pspReference)
+        server.verify()
+    }
+
+    @Test
+    fun `authorize with line items sends purchase_units items and a matching item_total breakdown`() {
+        expectTokenOnce()
+        server.expect(requestTo("$base/v2/checkout/orders"))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(jsonPath("$.purchase_units[0].amount.value").value("20.00"))
+            .andExpect(jsonPath("$.purchase_units[0].amount.breakdown.item_total.value").value("20.00"))
+            .andExpect(jsonPath("$.purchase_units[0].items[0].name").value("OUTBOUND FR9592"))
+            .andExpect(jsonPath("$.purchase_units[0].items[0].quantity").value("1"))
+            .andExpect(jsonPath("$.purchase_units[0].items[0].unit_amount.value").value("10.00"))
+            .andExpect(jsonPath("$.purchase_units[0].items[1].name").value("RETURN FR9593"))
+            .andRespond(
+                withSuccess(
+                    """{"id":"5O1","purchase_units":[{"payments":{"authorizations":[{"id":"AUTH-9"}]}}]}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        val items = listOf(LineItem("OUTBOUND FR9592", 1, 1_000), LineItem("RETURN FR9593", 1, 1_000))
+        val result = gateway.authorize("order-1", 2_000, "EUR", items)
+
+        assertIs<AuthorizationResult.Authorized>(result)
         server.verify()
     }
 

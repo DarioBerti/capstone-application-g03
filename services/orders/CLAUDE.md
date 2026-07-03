@@ -6,19 +6,32 @@
 
 ## What this service is
 
-The purchase **orchestrator** and the entry point to the money path. It accepts an order synchronously,
-then drives the async saga `place order → reserve inventory → authorize payment → confirm`, calling
-Inventory and Payments as it goes and ending each order in a terminal state (confirmed, or rejected with
-a reason). Package `it.g03.orders`. This is the critical path — SLOs, tracing, and chaos center here.
+The purchase **orchestrator** and the entry point to the money path. A booking is one journey — an outbound
+leg (required) plus an optional return leg. The user-driven half is synchronous — create a DRAFT, add legs
+(each **reserves seats on-add**; the first starts a backend-owned hold window), then **pay** within the window
+— and the reply-driven half is the async saga (authorize → confirm every held leg → capture once → CONFIRMED,
+or a terminal REJECTED with a reason). Package `it.g03.orders`. This is the critical path — SLOs, tracing, and
+chaos center here.
 
 ## Invariants to protect
 
 - **Atomic business-change + event.** The state change and the event announcing it must commit together.
   Use the **transactional outbox** — never publish to Kafka inside business logic and hope the commit
   follows, and never let an event escape for a change that rolled back.
-- **Every saga step is idempotent and replay-safe.** A redelivered `order-placed` or a retried
-  downstream call must not re-reserve, double-authorize, or advance an already-terminal order. Guard on
-  current state; rely on downstream idempotency keys.
+- **Every saga step is idempotent and replay-safe.** A redelivered reply (`reservation-result`,
+  `payment-result`, `seats-confirmed`, `payment-captured`) or a re-driven command must not re-reserve,
+  double-authorize, double-capture, or advance an already-terminal order. Guard on the current order/leg
+  status; rely on downstream idempotency keys.
+- **The hold window is backend-authoritative.** `expires_at` is stamped on the first leg, re-checked
+  server-side at pay, and enforced by the checkout-expiry sweeper — never trust a client countdown. At expiry
+  the reason is dual-cause on `payment_initiated_at`: user inaction (`EXPIRED_NO_PAYMENT`) vs system fault
+  (`SERVICE_UNAVAILABLE`). Keep the two timers distinct: the timeout sweeper RECOVERS a stuck post-pay step
+  within the window; the expiry sweeper GIVES UP at the window.
+- **Multi-leg is all-or-nothing after pay.** `confirm-seats` fans out to every reserved leg and
+  `capture-payment` fires exactly once, when the last leg confirms (serialized by a pessimistic order lock;
+  capture is idempotent downstream so a rare double-fire is harmless). If any leg expires at confirm, release
+  the already-confirmed legs, cancel the authorization (void, no capture → no refund), and reject. A sold-out
+  *return* is a one-way fallback, not a rejection.
 - **No DB transaction held across a remote call.** Reserve/authorize are network calls — keep them
   outside open transactions so a slow/failed downstream can't pin connections, and so the work is
   resumable on redelivery.

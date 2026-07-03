@@ -4,6 +4,7 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker
 import io.github.resilience4j.retry.annotation.Retry
 import it.g03.payments.gateway.AuthorizationResult
 import it.g03.payments.gateway.CaptureResult
+import it.g03.payments.gateway.LineItem
 import it.g03.payments.gateway.PaymentGateway
 import it.g03.payments.gateway.PspException
 import it.g03.payments.gateway.TransientPspException
@@ -35,10 +36,10 @@ class PayPalPaymentGateway(
 
     @CircuitBreaker(name = PAYPAL)
     @Retry(name = PAYPAL)
-    override fun authorize(orderId: String, amountCents: Long, currency: String): AuthorizationResult {
+    override fun authorize(orderId: String, amountCents: Long, currency: String, items: List<LineItem>): AuthorizationResult {
         val request = CreateOrderRequest(
             intent = "AUTHORIZE",
-            purchaseUnits = listOf(PurchaseUnit(Amount(currency, formatAmount(amountCents)))),
+            purchaseUnits = listOf(purchaseUnit(amountCents, currency, items)),
             paymentSource = PaymentSource(Card(cardNumber, cardExpiry, cardSecurityCode)),
         )
         return translate {
@@ -119,6 +120,19 @@ class PayPalPaymentGateway(
 
     private fun captureId(capture: CaptureResponse?): String =
         capture?.id ?: throw PspException("PayPal capture returned no capture id")
+
+    // Builds the purchase unit. With items, PayPal requires amount.value == breakdown.item_total == Σ(items), so
+    // we compute item_total from the items and use it for both — the invariant always holds (and equals
+    // amountCents, which Orders derives from the same legs). With no items, authorize the total alone (unchanged).
+    private fun purchaseUnit(amountCents: Long, currency: String, items: List<LineItem>): PurchaseUnit {
+        if (items.isEmpty()) return PurchaseUnit(Amount(currency, formatAmount(amountCents)))
+        val itemTotal = formatAmount(items.sumOf { it.unitAmountCents * it.quantity })
+        val payPalItems = items.map { Item(it.name, it.quantity.toString(), Amount(currency, formatAmount(it.unitAmountCents))) }
+        return PurchaseUnit(
+            amount = Amount(currency, itemTotal, Breakdown(Amount(currency, itemTotal))),
+            items = payPalItems,
+        )
+    }
 
     private fun formatAmount(amountCents: Long): String = "%d.%02d".format(amountCents / 100, amountCents % 100)
 
