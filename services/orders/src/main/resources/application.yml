@@ -101,7 +101,7 @@ management:
       # Readiness depends on our OWN database. Kafka outages are absorbed by the async pipeline (retry/redelivery), so we deliberately keep Kafka OUT of readiness to avoid flapping the critical sync entry API on transient broker issues
       group:
         readiness:
-          include: readinessState,db
+          include: readinessState,db,warmup
   health:
     readinessstate:
       enabled: true

@@ -96,7 +96,7 @@ management:
       group:
         readiness:
           # Readiness should reflect both application state and database availability
-          include: readinessState,db
+          include: readinessState,db,warmup
   health:
     readinessstate:
       # Spring Boot's readiness lifecycle state
