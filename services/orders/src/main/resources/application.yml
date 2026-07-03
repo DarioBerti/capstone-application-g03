@@ -105,9 +105,15 @@ management:
   tracing:
     sampling:
       probability: 1.0
-  otlp:
+  # Boot 4 property home for the OTLP trace export (the Boot-3 `management.otlp.tracing.endpoint` binds
+  # NOTHING on Boot 4 -> no exporter, spans silently never sent; found live on AKS, config agent-log #23).
+  # localhost = the local-dev default; in-cluster the chart overrides it via
+  # MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT (-> the otel-collector gateway).
+  opentelemetry:
     tracing:
-      endpoint: http://localhost:4318/v1/traces
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/traces
 
 # The Orders -> Payments circuit breaker, the retry, and the bulkhead are RETIRED: the money path is now async
 # Kafka command/reply, so its resilience comes from temporal decoupling (Kafka buffering + bounded consumer
