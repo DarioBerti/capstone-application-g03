@@ -39,6 +39,11 @@ class OutboxEvent(
     @Column(nullable = false, columnDefinition = "text")
     val payload: String = "",
 
+    // W3C trace context captured at append time; Debezium's EventRouter maps it to the `traceparent`
+    // Kafka header (the app does not produce to Kafka, so this column is how the trace crosses the CDC hop)
+    @Column(length = 64)
+    val traceparent: String? = null,
+
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
 

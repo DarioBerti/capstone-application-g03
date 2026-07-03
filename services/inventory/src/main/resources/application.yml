@@ -50,6 +50,12 @@ spring:
       auto-offset-reset: earliest
       # Manual offset commit: we acknowledge only AFTER the handler durably processed the event, so a crash mid-processing causes a redelivery (at-least-once) instead of a silent loss, which is safe because our handlers are idempotent
       enable-auto-commit: false
+    # Fase 4 cross-Kafka tracing: continue the W3C trace carried by the Debezium-produced `traceparent`
+    # header (listener); template observation covers the few direct sends (the DLT recoverer).
+    listener:
+      observation-enabled: true
+    template:
+      observation-enabled: true
   security:
     oauth2:
       resourceserver:
