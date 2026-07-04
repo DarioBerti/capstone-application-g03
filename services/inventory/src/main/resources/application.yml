@@ -78,8 +78,12 @@ app:
 # Reservation hold semantics: a RESERVED hold not confirmed/released within "ttl" is swept back to stock by the reconciler (every "sweep-interval"). ISO-8601 durations
 inventory:
   reservation:
-    # how long a hold stays valid before it can be swept back to stock (the hold TTL)
-    ttl: PT2M
+    # How long a hold stays valid before the reconciler can sweep it back to stock (the hold TTL). This is now a
+    # BACKSTOP for a crashed Orders service, not the primary reclaim: with reserve-on-add, seats are held for the
+    # whole human checkout window (orders app.checkout.window, PT15M), so the TTL MUST exceed it — otherwise the
+    # reconciler would reclaim a seat mid-checkout, before the user can pay. Margin over the window lets the
+    # order-level release (on expiry/removal) win attribution; the TTL only fires if Orders never releases.
+    ttl: PT16M
     # how often the reconciler wakes up to sweep overdue holds
     sweep-interval: PT15S
     # background sweep on/off (Fase 2 #5.5): default true in prod; tests set false so the loop never races assertions

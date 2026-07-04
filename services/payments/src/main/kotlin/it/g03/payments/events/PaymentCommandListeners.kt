@@ -1,5 +1,6 @@
 package it.g03.payments.events
 
+import it.g03.payments.gateway.LineItem
 import it.g03.payments.service.PaymentsService
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
@@ -24,7 +25,7 @@ class PaymentCommandListeners(
     @KafkaListener(topics = [Topics.AUTHORIZE_PAYMENT], autoStartup = "\${app.kafka-listeners-enabled:true}")
     fun onAuthorizePayment(payload: String) {
         val command = objectMapper.readValue(payload, AuthorizePaymentCommand::class.java)
-        service.authorize(command.orderId, command.amountCents)
+        service.authorize(command.orderId, command.amountCents, command.items.map { LineItem(it.name, it.quantity, it.unitAmountCents) })
     }
 
     @KafkaListener(topics = [Topics.CAPTURE_PAYMENT], autoStartup = "\${app.kafka-listeners-enabled:true}")

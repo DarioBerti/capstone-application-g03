@@ -34,18 +34,21 @@ data class ReleaseSeatsCommand(
     val occurredAt: Instant = Instant.now(),
 )
 
-// produced: reply to a reserve-seats command (status RESERVED | SOLD_OUT)
+// produced: reply to a reserve-seats command (status RESERVED | SOLD_OUT). Carries tripCode so multi-leg Orders
+// can map the reply to the right booking leg (a round-trip order holds two reservations under one orderId).
 data class ReservationResultEvent(
     val eventId: UUID = UUID.randomUUID(),
     val orderId: String,
+    val tripCode: String,
     val status: String,
     val occurredAt: Instant = Instant.now(),
 )
 
-// produced: reply to a confirm-seats command (status CONFIRMED | EXPIRED)
+// produced: reply to a confirm-seats command (status CONFIRMED | EXPIRED). Carries tripCode for the same reason.
 data class SeatsConfirmedEvent(
     val eventId: UUID = UUID.randomUUID(),
     val orderId: String,
+    val tripCode: String,
     val status: String,
     val occurredAt: Instant = Instant.now(),
 )

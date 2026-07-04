@@ -20,8 +20,12 @@ one last seat — can both buy it?* The answer must always be no.
 - **Reservation is idempotent.** A duplicated reserve for the same order/product must not reserve twice
   — enforced by a uniqueness constraint plus fast-path replay of the stored outcome.
 - **Reservations don't leak.** A reservation that is never confirmed must be released and the seats
-  restocked (a supervised background reconciler sweeps overdue holds). Releasing seats must itself be
-  safe to repeat.
+  restocked (a supervised background reconciler sweeps overdue holds). Releasing seats must itself be safe to
+  repeat, and must be able to give back an already-**CONFIRMED** sale too — a round-trip booking whose sibling
+  leg expires releases the confirmed leg (`CONFIRMED → RELEASED + restock`). The hold TTL is a **backstop** for
+  a crashed Orders service, not the primary reclaim: with reserve-on-add, seats are held for the whole human
+  checkout window, so the TTL MUST exceed the orders `app.checkout.window` (else the reconciler reclaims a seat
+  mid-checkout, before the user can pay).
 - **The synchronous answer is load-bearing; events are not.** The reserve/confirm/release HTTP outcome
   is what the saga depends on. Emitted events are best-effort signals published **after commit** —
   losing one must not corrupt seat counts.

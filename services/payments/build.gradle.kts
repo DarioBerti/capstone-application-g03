@@ -8,7 +8,7 @@ plugins {
 
 group = "it.g03"
 version = "0.0.1-SNAPSHOT"
-description = "EuroTransit Payments service — synchronous authorization with strict idempotency (no double-charge)"
+description = "EuroTransit Payments service — async authorize/capture via PayPal (sandbox) with strict idempotency (no double-charge)"
 
 java {
 	toolchain {
@@ -20,8 +20,9 @@ repositories {
 	mavenCentral()
 }
 
-// See docs/agent-log.md: Resilience4j starter targets Spring Boot 3; verify on Boot 4.
-val resilience4jVersion = "2.3.0"
+// resilience4j-spring-boot4 is the Boot 4 line (Spring Boot 4 / Framework 7); its annotations
+// (@CircuitBreaker/@Retry) weave via the AspectJ starter. Pinned to match orders.
+val resilience4jVersion = "2.4.0"
 
 dependencies {
 	// Synchronous authorize API + idempotency store (key + persisted result)
@@ -40,10 +41,12 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-kafka")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 
-	// Resilience (Pillar C): protect the outbound call to the (mock) external PSP
-	implementation("io.github.resilience4j:resilience4j-spring-boot3:$resilience4jVersion")
+	// Resilience (Pillar C): protect the outbound call to the external PSP (PayPal Orders v2). The
+	// @CircuitBreaker/@Retry aspects weave via the AspectJ starter (Boot 4 renamed starter-aop -> starter-aspectj).
+	implementation("io.github.resilience4j:resilience4j-spring-boot4:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-kotlin:$resilience4jVersion")
 	implementation("io.github.resilience4j:resilience4j-micrometer:$resilience4jVersion")
+	implementation("org.springframework.boot:spring-boot-starter-aspectj")
 
 	// Observability (Pillar D)
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
@@ -64,6 +67,8 @@ dependencies {
 
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
+	// spring-kafka-test / spring-security-test for slices; the PayPal gateway is stubbed with Spring's
+	// MockRestServiceServer (from spring-test, pulled by starter-webmvc-test) — no extra HTTP-mock dependency.
 	testImplementation("org.springframework.kafka:spring-kafka-test")
 	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")

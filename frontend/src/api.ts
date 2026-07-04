@@ -1,5 +1,5 @@
 import { getToken } from './auth'
-import type { Authorization, InventoryItem, Order, Page, Profile, Station, Trip } from './types'
+import type { Authorization, InventoryItem, LegDirection, Order, Page, Profile, Station, Trip } from './types'
 
 // All requests go to same-origin /api/* and are proxied to the right service by Vite (vite.config.ts).
 // The services are OAuth2 resource servers, so every call carries the user's Keycloak bearer token.
@@ -51,19 +51,30 @@ export const api = {
       .then((r) => json<Page<Station>>(r))
       .then((page) => page.content),
 
-  // The order references the trip by its business `code`; the buyer identity is taken from the bearer token.
-  // `idempotencyKey` (client-minted, stable across retries of one checkout) rides in the Idempotency-Key
-  // header — NOT the body — so a retried/duplicate POST replays the same order instead of creating a second.
-  placeOrder: (body: { tripCode: string; qty: number; idempotencyKey?: string }): Promise<Order> => {
-    const { idempotencyKey, ...payload } = body
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  // Create an empty DRAFT booking. The buyer identity is taken from the bearer token. `idempotencyKey`
+  // (client-minted, stable across retries of one "start booking" intent) rides in the Idempotency-Key header —
+  // NOT the body — so a double-clicked/ retried create replays the same draft instead of creating a second.
+  createDraft: (idempotencyKey?: string): Promise<Order> => {
+    const headers: Record<string, string> = {}
     if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
-    return authedFetch('/api/orders', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    }).then((r) => json<Order>(r))
+    return authedFetch('/api/orders', { method: 'POST', headers }).then((r) => json<Order>(r))
   },
+
+  // Add a leg (reserve-on-add). The first leg starts the backend-owned hold window and moves the order to HELD.
+  addLeg: (orderId: string, leg: { direction: LegDirection; tripCode: string; qty: number }): Promise<Order> =>
+    authedFetch(`/api/orders/${orderId}/legs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(leg),
+    }).then((r) => json<Order>(r)),
+
+  // Remove a leg (releasing its hold); if it was the last active leg the booking reverts to DRAFT.
+  removeLeg: (orderId: string, legId: string): Promise<Order> =>
+    authedFetch(`/api/orders/${orderId}/legs/${legId}`, { method: 'DELETE' }).then((r) => json<Order>(r)),
+
+  // Pay within the window — the backend re-checks the window server-side, then authorizes the reserved legs.
+  pay: (orderId: string): Promise<Order> =>
+    authedFetch(`/api/orders/${orderId}/pay`, { method: 'POST' }).then((r) => json<Order>(r)),
 
   getOrder: (orderId: string): Promise<Order> =>
     authedFetch(`/api/orders/${orderId}`).then((r) => json<Order>(r)),

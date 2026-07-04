@@ -107,5 +107,21 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
   background: var(--line);
 }
 .badge.confirmed, .badge.authorized { background: rgba(47,170,90,0.2); color: #6ee7a0; }
-.badge.rejected, .badge.declined { background: rgba(229,83,75,0.2); color: #ff9b95; }
-.badge.pending, .badge.reserved { background: rgba(79,140,255,0.2); color: #9cc0ff; }
+.badge.rejected, .badge.declined, .badge.sold_out, .badge.expired, .badge.voided { background: rgba(229,83,75,0.2); color: #ff9b95; }
+.badge.pending, .badge.reserved, .badge.held, .badge.paying, .badge.draft, .badge.released { background: rgba(79,140,255,0.2); color: #9cc0ff; }
+
+/* Booking legs (outbound + optional return) */
+.legs { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 6px; }
+.leg { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.leg.sold_out, .leg.expired, .leg.released { opacity: 0.55; }
+.link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 13px; text-decoration: underline; }
+.link:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+.pay-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+
+/* Backend-owned hold-window countdown (display-only; the server is the authority on expiry) */
+.countdown { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: rgba(79,140,255,0.12); font-size: 14px; }
+.countdown.urgent { background: rgba(229,83,75,0.14); }
+
+/* Distinct treatment for the two expiry causes: a system fault reads apologetic, user inaction informational */
+.reject-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: rgba(229,83,75,0.10); font-size: 14px; }
+.reject-note.system-fault { background: rgba(240,180,60,0.14); }

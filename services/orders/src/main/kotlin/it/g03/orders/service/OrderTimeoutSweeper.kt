@@ -12,25 +12,23 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 
-// the resumable saga states; a terminal order is never swept
-private val NON_TERMINAL = listOf(OrderStatus.PENDING, OrderStatus.RESERVED, OrderStatus.AUTHORIZED)
+// The resumable POST-PAY saga states. A DRAFT/HELD order is awaiting the USER (not "stuck") and is handled by the
+// checkout-window sweeper, not re-driven here; a terminal order is never swept.
+private val RESUMABLE_POST_PAY = listOf(OrderStatus.PAYING, OrderStatus.AUTHORIZED)
 
 /**
- * Re-drives the orders STUCK in a non-terminal state (a reply was lost — Kafka partition, a consumer crash, a
- * dropped DLT message). This is the liveness backstop of the async saga (Pillar C): the reply-driven pipeline
+ * Re-drives the post-pay orders STUCK in a resumable state (a reply was lost — Kafka partition, a consumer crash,
+ * a dropped DLT message). This is the liveness backstop of the async saga (Pillar C): the reply-driven pipeline
  * has no redelivery once an offset is committed, so without this a wedged order would sit non-terminal forever.
- * Every poll, an order whose `updatedAt` is older than the deadline has the command for its CURRENT state
- * re-emitted via [OrderStateMachine.redrive] (PENDING -> reserve-seats, RESERVED -> authorize-payment,
- * AUTHORIZED -> confirm-seats). Commands are idempotent downstream, so a re-send is always safe; the re-drive
- * bumps `updatedAt` so the same order is not swept again on the next poll.
+ * Every poll, an order whose `updatedAt` predates the deadline has the command for its CURRENT state re-emitted
+ * via [OrderStateMachine.redrive] (PAYING -> authorize-payment; AUTHORIZED -> confirm-seats for each still-held
+ * leg, or capture-payment if all legs are already confirmed). Commands are idempotent downstream, so a re-send is
+ * always safe; the re-drive bumps `updatedAt` so the same order is not swept again on the next poll.
  *
- * Driven by Spring `@Scheduled` — a plain blocking DB poll, no coroutines needed. The task fires every
- * `app.timeout-sweeper.poll-interval` and is gated by `app.timeout-sweeper.enabled` (tests set it false so the
- * poll stays off while they drive the state machine directly). Resilience lives in the sweep body, not a
- * coroutine scope: each order is re-driven in its own try/catch, so one failing order (e.g. the loser of a
- * @Version race against an in-flight reply) never skips the rest; and each [OrderStateMachine.redrive] commits
- * independently and is idempotent, so an order abandoned when the scheduler stops on shutdown is safely resumed
- * on the next startup.
+ * This is the RECOVER-within-the-window half of the two-timer design; [CheckoutExpirySweeper] is the GIVE-UP-at-
+ * the-window half. Driven by Spring `@Scheduled` — a plain blocking DB poll; gated by `app.timeout-sweeper.enabled`
+ * (tests set it false and drive the state machine directly). Each order is re-driven in its own try/catch so one
+ * failure never truncates the batch.
  */
 @Component
 class OrderTimeoutSweeper(
@@ -67,7 +65,7 @@ class OrderTimeoutSweeper(
     internal fun sweepOnce() {
         val cutoff = Instant.now().minus(deadline)
         val stuck = try {
-            orders.findByStatusInAndUpdatedAtBefore(NON_TERMINAL, cutoff)
+            orders.findByStatusInAndUpdatedAtBefore(RESUMABLE_POST_PAY, cutoff)
         } catch (e: Exception) {
             log.warn("order timeout sweep query failed, will retry: {}", e.message)
             return

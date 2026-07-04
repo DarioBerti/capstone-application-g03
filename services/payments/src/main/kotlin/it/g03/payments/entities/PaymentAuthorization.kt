@@ -45,8 +45,11 @@ class PaymentAuthorization(
     @Column(nullable = false, length = 16)
     var status: AuthorizationStatus = AuthorizationStatus.AUTHORIZED,
 
-    @Column(name = "psp_reference", length = 64)   // (mock) PSP auth code, set on AUTHORIZED (the hold)
+    @Column(name = "psp_reference", length = 64)   // PSP authorization id, set on AUTHORIZED (the hold)
     var pspReference: String? = null,
+
+    @Column(name = "capture_reference", length = 64)   // PSP capture id, set on CAPTURED (for reconciliation)
+    var captureReference: String? = null,
 
     @Column(name = "decline_reason", length = 64)  // why a DECLINED authorization was declined
     var declineReason: String? = null,

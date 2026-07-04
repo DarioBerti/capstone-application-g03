@@ -1,7 +1,16 @@
 // API-facing shapes, mirrored from the services' controller DTOs (the code is the source of truth).
-export type OrderStatus = 'PENDING' | 'RESERVED' | 'CONFIRMED' | 'REJECTED'
-export type RejectionReason = 'SOLD_OUT' | 'PAYMENT_DECLINED' | 'RESERVATION_EXPIRED'
+// A booking is one journey: an OUTBOUND leg (required) + an optional RETURN leg. Two-phase, human-gated:
+// DRAFT -> HELD (legs reserved, hold window running) -> PAYING -> AUTHORIZED -> CONFIRMED, or REJECTED.
+export type OrderStatus = 'DRAFT' | 'HELD' | 'PAYING' | 'AUTHORIZED' | 'CONFIRMED' | 'REJECTED'
+export type RejectionReason =
+  | 'SOLD_OUT'
+  | 'PAYMENT_DECLINED'
+  | 'RESERVATION_EXPIRED'
+  | 'EXPIRED_NO_PAYMENT' // the hold window elapsed and the user never paid (user inaction)
+  | 'SERVICE_UNAVAILABLE' // pay was accepted but the pipeline stalled past the window (system fault)
 export type AuthorizationStatus = 'AUTHORIZED' | 'DECLINED' | 'VOIDED'
+export type LegDirection = 'OUTBOUND' | 'RETURN'
+export type LegStatus = 'PENDING' | 'RESERVED' | 'SOLD_OUT' | 'CONFIRMED' | 'EXPIRED' | 'RELEASED'
 
 // A station a trip runs between (catalog reference data).
 export interface Station {
@@ -36,14 +45,28 @@ export interface Page<T> {
   size: number
 }
 
-export interface Order {
-  orderId: string
+export interface OrderLeg {
+  legId: string
+  direction: LegDirection
   tripCode: string
   qty: number
-  amountCents: number
-  currency: string
+  unitPriceCents: number
+  lineAmountCents: number
+  status: LegStatus
+}
+
+export interface Order {
+  orderId: string
   status: OrderStatus
   rejectionReason: RejectionReason | null
+  currency: string
+  amountCents: number
+  legs: OrderLeg[]
+  // Backend-owned hold window. `remainingSeconds` is computed server-side (max(0, expiresAt - now)); the UI
+  // renders a countdown from it but is NEVER the authority on expiry — the backend re-checks at pay.
+  expiresAt: string | null
+  remainingSeconds: number | null
+  paymentInitiatedAt: string | null
 }
 
 export interface InventoryItem {

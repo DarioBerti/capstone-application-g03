@@ -1,8 +1,8 @@
 package it.g03.orders.controller
 
 import io.github.resilience4j.ratelimiter.annotation.RateLimiter
+import it.g03.orders.dto.AddLegRequest
 import it.g03.orders.dto.OrderResponse
-import it.g03.orders.dto.PlaceOrderRequest
 import it.g03.orders.dto.toResponse
 import it.g03.orders.service.OrderService
 import jakarta.validation.Valid
@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -20,40 +21,63 @@ import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
 /**
- * PUBLIC API (exposed through the ingress at /api/orders).
+ * PUBLIC API (exposed through the ingress at /api/orders) for the two-phase, human-gated booking flow:
+ *   create DRAFT -> add outbound/return leg(s) (reserve-on-add, starts the hold window) -> pay within the window.
  *
- * POST returns **202 Accepted**: the user gets an immediate, durable acknowledgement (order + outbox event
- * committed) while reservation/payment/confirmation proceed through the Kafka-driven pipeline. The buyer
- * identity is taken from the authenticated JWT (never the request body); an optional `Idempotency-Key`
- * header makes a retried POST replay the same order instead of creating a duplicate.
- *
- * GET lets clients (and the demo) observe the order reaching a terminal state.
+ * The buyer identity is always taken from the authenticated JWT, never the request body. `POST /pay` returns
+ * 202 Accepted — authorization succeeded and the confirm/capture saga proceeds asynchronously; clients poll GET
+ * to watch the booking reach a terminal state.
  */
 @RestController
-@RequestMapping("/api/orders") // sets the base path for every endpoint defined in this controller
+@RequestMapping("/api/orders")
 class OrdersController(
     private val service: OrderService,
 ) {
 
-    // POST /api/orders -> places an order and returns 202 Accepted (the saga proceeds asynchronously).
-    // @RateLimiter sheds the intake: within the "orders-intake" budget the body runs and returns 202; over
-    // budget it throws RequestNotPermitted before the body runs (DB/outbox untouched) -> 429 via GlobalExceptionHandler.
+    // POST /api/orders -> create an empty DRAFT booking (201). Optional Idempotency-Key replays instead of duplicating.
     @RateLimiter(name = "orders-intake")
     @PostMapping
-    fun place(
-        @Valid @RequestBody request: PlaceOrderRequest,
+    fun create(
         @AuthenticationPrincipal jwt: Jwt,
         @RequestHeader(name = "Idempotency-Key", required = false) idempotencyKey: String?,
     ): ResponseEntity<OrderResponse> {
-        // Buyer identity comes from the validated token, not the client body (realm-import gotcha: guard a
-        // missing `sub` with a 400 instead of an NPE). `email` may be absent — that is fine, we snapshot null.
-        val buyerSub = jwt.subject ?: throw IllegalArgumentException("token is missing the subject (sub) claim")
-        val buyerEmail = jwt.getClaimAsString("email")
-        val order = service.placeOrder(request.tripCode, request.qty, buyerSub, buyerEmail, idempotencyKey)
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(order.toResponse())
+        val view = service.createDraft(buyerSub(jwt), jwt.getClaimAsString("email"), idempotencyKey)
+        return ResponseEntity.status(HttpStatus.CREATED).body(view.toResponse())
     }
 
-    // GET /api/orders/{orderId} -> looks up a single order by its id (lets clients observe the terminal state)
+    // POST /api/orders/{id}/legs -> add an outbound/return leg (reserve-on-add); the first leg starts the window.
+    @PostMapping("/{orderId}/legs")
+    fun addLeg(
+        @PathVariable orderId: UUID,
+        @Valid @RequestBody request: AddLegRequest,
+        @AuthenticationPrincipal jwt: Jwt,
+    ): ResponseEntity<OrderResponse> {
+        val view = service.addLeg(orderId, buyerSub(jwt), request.direction, request.tripCode, request.qty)
+        return ResponseEntity.status(HttpStatus.CREATED).body(view.toResponse())
+    }
+
+    // DELETE /api/orders/{id}/legs/{legId} -> remove a leg (releasing its hold); empties back to DRAFT if the last.
+    @DeleteMapping("/{orderId}/legs/{legId}")
+    fun removeLeg(
+        @PathVariable orderId: UUID,
+        @PathVariable legId: UUID,
+        @AuthenticationPrincipal jwt: Jwt,
+    ): OrderResponse = service.removeLeg(orderId, buyerSub(jwt), legId).toResponse()
+
+    // POST /api/orders/{id}/pay -> authorize within the window; 202 (confirm/capture proceed asynchronously).
+    @RateLimiter(name = "orders-intake")
+    @PostMapping("/{orderId}/pay")
+    fun pay(
+        @PathVariable orderId: UUID,
+        @AuthenticationPrincipal jwt: Jwt,
+    ): ResponseEntity<OrderResponse> =
+        ResponseEntity.status(HttpStatus.ACCEPTED).body(service.pay(orderId, buyerSub(jwt)).toResponse())
+
+    // GET /api/orders/{orderId} -> the booking with its legs, hold window, and terminal state.
     @GetMapping("/{orderId}")
     fun get(@PathVariable orderId: UUID): OrderResponse = service.get(orderId).toResponse()
+
+    // Buyer identity comes from the validated token (guard a missing `sub` with a 400 instead of an NPE).
+    private fun buyerSub(jwt: Jwt): String =
+        jwt.subject ?: throw IllegalArgumentException("token is missing the subject (sub) claim")
 }

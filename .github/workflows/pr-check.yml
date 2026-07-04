@@ -1,0 +1,102 @@
+name: PR checks - test changed services
+
+# Runs the per-service test suites on every PR targeting main or dev, BEFORE merge.
+# Mirrors ci.yml's change-detection + matrix, but STOPS at tests: it never builds or pushes images,
+# never logs in to ACR, and never holds cluster or config-repo credentials. ci.yml only runs
+# post-merge (on: push to main), so without this a red build would reach main before anyone sees it.
+# This is the pre-merge gate that closes that gap.
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+  # dorny/paths-filter lists a PR's changed files via the GitHub API on pull_request events; that
+  # call needs pull-requests:read. A permissions block is an allowlist (everything unlisted -> none),
+  # so without this line the token can't read pulls and the action fails with
+  # "Resource not accessible by integration".
+  pull-requests: read
+
+jobs:
+  # 1 — Detect which services changed; emit a JSON list to drive the test matrix
+  detect-changes:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.filter.outputs.changes }}
+    steps:
+      # On pull_request events dorny/paths-filter diffs against the PR's base branch automatically,
+      # so (unlike the push-triggered ci.yml) no fetch-depth:0 / manual base handling is needed.
+      - uses: actions/checkout@v4
+
+      # `changes` is a JSON array of the filter names that matched, e.g. ["orders","inventory"].
+      # Keep this map in sync with ci.yml's filter map and the `services` list in the justfile.
+      - name: Filter changed paths per service
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            catalog:       'services/catalog/**'
+            orders:        'services/orders/**'
+            inventory:     'services/inventory/**'
+            payments:      'services/payments/**'
+            notifications: 'services/notifications/**'
+            users:         'services/users/**'
+
+  # 2 — Run the test suite for each changed service (in parallel)
+  test:
+    name: Test ${{ matrix.service }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      # fail-fast=false: one failing service does not cancel the sibling test jobs
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect-changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      # Tests use Testcontainers PostgreSQL; the ubuntu-latest runner ships a running Docker daemon.
+      - name: Test ${{ matrix.service }}
+        working-directory: services/${{ matrix.service }}
+        run: ./gradlew test --no-daemon --console=plain
+
+  # 3 — A single fixed-name gate so branch protection can require ONE required check regardless of
+  # which services changed. The `test` matrix is skipped when no service changed (empty matrix), and
+  # a skipped required check can silently unblock a merge; this job collapses the matrix result into
+  # one deterministic pass/fail. `if: always()` lets it observe `test`'s outcome even when skipped.
+  pr-checks:
+    name: PR checks
+    needs: [detect-changes, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify results
+        # Key off job RESULTS, not the services JSON string: the `test` matrix is legitimately
+        # `skipped` when no service changed (nothing to test -> pass), so only a real test failure
+        # (or a failed change-detection) fails the gate. `if: always()` above runs this step even
+        # when `test` was skipped; needs.<job>.result gives the aggregate matrix outcome.
+        env:
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "Change detection did not succeed (result: $DETECT_RESULT)."
+            exit 1
+          fi
+          # test is skipped when no service changed -> nothing to test -> pass.
+          if [ "$TEST_RESULT" = "success" ] || [ "$TEST_RESULT" = "skipped" ]; then
+            echo "PR checks passed (test result: $TEST_RESULT)."
+            exit 0
+          fi
+          echo "Changed-service tests failed (result: $TEST_RESULT)."
+          exit 1

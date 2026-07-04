@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
  * silent prod cardinality explosion.
  *
  * It triggers the two surviving custom-metric families deterministically (no flaky async saga): the intake
- * shed (`orders_intake_shed_total`) and the placement counter (`orders_placed_total`), then asserts EVERY
+ * shed (`orders_intake_shed_total`) and the draft-creation counter (`orders_created_total`), then asserts EVERY
  * registered `orders_*` meter carries only allowed tag keys and no id-shaped tag value. (The gateway's
  * `orders_payment_failures_total{outcome}` is gone with the sync gateways.)
  */
@@ -72,14 +72,14 @@ class MetricCardinalityGuardTest {
         assertTrue(!limiter.acquirePermission(), "3rd call must be over the 2-permit budget")
         handler.overloaded(RequestNotPermitted.createRequestNotPermitted(limiter))
 
-        // 2) register orders_placed_total via a real placement
-        orderService.placeOrder("FR9592-20260629", 1, buyerSub = "buyer-1", buyerEmail = "buyer@example.org")
+        // 2) register orders_created_total via a real draft creation
+        orderService.createDraft(buyerSub = "buyer-1", buyerEmail = "buyer@example.org", idempotencyKey = null)
 
         // sanity: the two custom families we just exercised are actually present (the scan below is non-trivial)
         val custom = meterRegistry.meters.filter { it.id.name.startsWith("orders_") }
         val names = custom.map { it.id.name }.toSet()
         assertTrue("orders_intake_shed_total" in names, "expected the shed counter to be registered")
-        assertTrue("orders_placed_total" in names, "expected the placement counter to be registered")
+        assertTrue("orders_created_total" in names, "expected the draft-creation counter to be registered")
 
         // 3) the guard: no custom orders_* meter may carry a high-cardinality label
         custom.forEach { meter ->

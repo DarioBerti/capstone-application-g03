@@ -24,17 +24,14 @@ class OrderSaga(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // order-placed trigger: emit reserve-seats (status stays PENDING)
-    fun start(orderId: UUID) = dispatch(orderId) { stateMachine.start(orderId) }
+    // reservation-result (per leg): RESERVED -> the leg is held; SOLD_OUT -> the leg drops out (one-way fallback)
+    fun onReservationResult(orderId: UUID, tripCode: String, status: String) = dispatch(orderId) { stateMachine.onReservationResult(orderId, tripCode, status) }
 
-    // reservation-result: RESERVED -> authorize-payment; SOLD_OUT -> reject
-    fun onReservationResult(orderId: UUID, status: String) = dispatch(orderId) { stateMachine.onReservationResult(orderId, status) }
-
-    // payment-result: AUTHORIZED -> confirm-seats; DECLINED -> release-seats + reject
+    // payment-result: AUTHORIZED -> fan out confirm-seats to every reserved leg; DECLINED -> release legs + reject
     fun onPaymentResult(orderId: UUID, status: String) = dispatch(orderId) { stateMachine.onPaymentResult(orderId, status) }
 
-    // seats-confirmed: CONFIRMED -> capture-payment; EXPIRED -> cancel-authorization + reject
-    fun onSeatsConfirmed(orderId: UUID, status: String) = dispatch(orderId) { stateMachine.onSeatsConfirmed(orderId, status) }
+    // seats-confirmed (fan-in per leg): all legs CONFIRMED -> capture-payment once; a leg EXPIRED -> compensate + reject
+    fun onSeatsConfirmed(orderId: UUID, tripCode: String, status: String) = dispatch(orderId) { stateMachine.onSeatsConfirmed(orderId, tripCode, status) }
 
     // payment-captured: AUTHORIZED -> CONFIRMED (terminal happy end)
     fun onPaymentCaptured(orderId: UUID) = dispatch(orderId) { stateMachine.onPaymentCaptured(orderId) }

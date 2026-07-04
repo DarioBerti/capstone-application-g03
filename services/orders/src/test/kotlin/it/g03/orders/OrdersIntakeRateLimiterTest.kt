@@ -3,7 +3,6 @@ package it.g03.orders
 import io.github.resilience4j.ratelimiter.RequestNotPermitted
 import it.g03.orders.controller.GlobalExceptionHandler
 import it.g03.orders.controller.OrdersController
-import it.g03.orders.dto.PlaceOrderRequest
 import io.micrometer.core.instrument.MeterRegistry
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -61,18 +60,18 @@ class OrdersIntakeRateLimiterTest {
             .claim("email", "buyer@example.org")
             .build()
 
-    // Verifies #3 end-to-end at the controller: within budget -> 202; over budget -> aspect rejects -> 429 + Retry-After (counted)
+    // Verifies #3 end-to-end at the controller: within budget -> 201; over budget -> aspect rejects -> 429 + Retry-After (counted)
     @Test
     fun `intake sheds with 429 + Retry-After once the per-window budget is exhausted`() {
-        // 1st request consumes the only permit -> accepted (the saga proceeds asynchronously)
-        val accepted = controller.place(PlaceOrderRequest("FR9592-20260629", 1), buyerJwt(), null)
-        assertEquals(HttpStatus.ACCEPTED, accepted.statusCode)
+        // 1st request consumes the only permit -> the DRAFT booking is created (201)
+        val accepted = controller.create(buyerJwt(), null)
+        assertEquals(HttpStatus.CREATED, accepted.statusCode)
 
         val shedBefore = sheds()
 
         // 2nd request is over budget -> the @RateLimiter aspect refuses it with RequestNotPermitted
         val rejected = assertFailsWith<RequestNotPermitted> {
-            controller.place(PlaceOrderRequest("FR9592-20260629", 1), buyerJwt(), null)
+            controller.create(buyerJwt(), null)
         }
 
         // the advice maps that rejection to HTTP 429 + a positive, window-derived Retry-After, and counts the shed

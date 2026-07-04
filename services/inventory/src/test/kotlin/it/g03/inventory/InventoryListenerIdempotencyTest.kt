@@ -69,6 +69,21 @@ class InventoryListenerIdempotencyTest {
         items.save(TripSeats(tripCode = trip, totalSeats = 10, available = 10))
     }
 
+    // The replies carry the tripCode so multi-leg Orders can map each reply to the right booking leg
+    @Test
+    fun `reservation-result and seats-confirmed replies carry the tripCode`() {
+        reserveSeats("order-1", 1)
+        confirmSeats("order-1")
+
+        val reserveTrip = outbox.findAll().first { it.topic == Topics.RESERVATION_RESULT }
+            .let { objectMapper.readValue(it.payload, ReservationResultEvent::class.java).tripCode }
+        val confirmTrip = outbox.findAll().first { it.topic == Topics.SEATS_CONFIRMED }
+            .let { objectMapper.readValue(it.payload, SeatsConfirmedEvent::class.java).tripCode }
+
+        assertEquals(trip, reserveTrip)
+        assertEquals(trip, confirmTrip)
+    }
+
     // A redelivered reserve-seats command holds the seats exactly once and re-emits the RESERVED reply each time
     @Test
     fun `duplicate reserve-seats command holds the seats once and re-emits the reply`() {

@@ -15,6 +15,19 @@ spring:
     # Fase 4 cross-Kafka tracing: continue the W3C trace carried by the Debezium-produced `traceparent` header
     listener:
       observation-enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # INBOUND: validate Keycloak user tokens on the per-user SSE stream. jwk-set-uri (NOT issuer-uri)
+          # builds a LAZY decoder (SecurityConfig), so this off-critical-path service boots even if Keycloak
+          # is briefly down. Overridden in-cluster by KEYCLOAK_JWK_SET_URI (chart, when secured:true).
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/eurotransit/protocol/openid-connect/certs}
+
+# Expected `iss` claim on inbound tokens; SecurityConfig rejects tokens from any other issuer.
+app:
+  oidc:
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
 
 server:
   # Default local HTTP port

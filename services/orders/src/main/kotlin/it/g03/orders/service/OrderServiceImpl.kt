@@ -1,84 +1,191 @@
 package it.g03.orders.service
 
+import it.g03.orders.entities.LegDirection
+import it.g03.orders.entities.LegStatus
 import it.g03.orders.entities.Order
-import it.g03.orders.events.OrderPlacedEvent
+import it.g03.orders.entities.OrderLeg
+import it.g03.orders.entities.OrderStatus
+import it.g03.orders.events.AuthorizePaymentCommand
+import it.g03.orders.events.ReleaseSeatsCommand
+import it.g03.orders.events.ReserveSeatsCommand
 import it.g03.orders.events.Topics
+import it.g03.orders.events.toPaymentLineItem
+import it.g03.orders.repository.OrderLegRepository
 import it.g03.orders.repository.OrderRepository
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 
-@Service // marks this class as a service-layer Spring bean (hosts the business logic)
+/**
+ * The user-driven half of the booking flow (create -> add legs -> pay). Every mutating method persists the
+ * business change and its outbound command in ONE transaction (transactional outbox — no dual-write). The
+ * reply-driven half (reservation-result / payment-result / seats-confirmed / payment-captured) lives in
+ * [OrderStateMachine]; this mirrors the original split (the synchronous entry emits, the saga reacts).
+ *
+ * A booking is one journey: an OUTBOUND leg (required) + an optional RETURN leg, at most one ACTIVE leg per
+ * direction, always distinct trip codes. The hold window is backend-authoritative — stamped on the first leg and
+ * re-checked here at pay.
+ */
+@Service
 class OrderServiceImpl(
     private val orders: OrderRepository,
+    private val legs: OrderLegRepository,
     private val outbox: Outbox,
     private val meterRegistry: MeterRegistry,
-    /**
-     * Flat demo pricing: looking prices up in Catalog would add a synchronous dependency to the money path that the track's interaction shape does not call for (client -> Catalog is for browsing; Orders -> Inventory/Payments are the decision calls)
-     */
+    // Flat demo pricing snapshotted onto each leg at add-time (see root CLAUDE.md: no sync Catalog call on the money path)
     @Value("\${app.unit-price-cents}") private val unitPriceCents: Long,
+    // Backend-owned checkout hold window: how long the user has to pay after the first leg is added
+    @Value("\${app.checkout.window}") private val checkoutWindow: Duration,
 ) : OrderService {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    /**
-     * THE synchronous entry of the money path: persist the order (PENDING) and its order-placed event in ONE transaction (transactional outbox to avoid dual-writes), then return immediately.
-     *
-     * Idempotent entry: when the caller supplies an `idempotencyKey`, a retried POST replays the existing
-     * order (no new order, no new event) instead of creating a duplicate. The UNIQUE(idempotency_key)
-     * constraint is the hard backstop for a concurrent same-key race (the loser's insert fails -> 409, and
-     * a retry then hits this replay path).
-     *
-     * Everything else happens asynchronously: the caller gets 202 + orderId and can poll GET /api/orders/{id}.
-     */
-    @Transactional // order row + order-placed outbox event commit atomically (no dual-write)
-    override fun placeOrder(
-        tripCode: String,
-        qty: Int,
-        buyerSub: String,
-        buyerEmail: String?,
-        idempotencyKey: String?,
-    ): Order {
-        // tripCode/qty are validated at the edge via Bean Validation on PlaceOrderRequest (@Valid). buyerSub
-        // is derived from the JWT (not a request-body field), so it stays a service-level precondition here.
+    @Transactional
+    override fun createDraft(buyerSub: String, buyerEmail: String?, idempotencyKey: String?): OrderView {
         require(buyerSub.isNotBlank()) { "buyerSub must not be blank" }
 
-        // Idempotent replay: a retried POST with the same key returns the existing order untouched.
+        // Idempotent replay: a retried create with the same key returns the existing booking untouched.
         if (idempotencyKey != null) {
-            orders.findByIdempotencyKey(idempotencyKey)?.let { existing ->
-                log.info("idempotent replay for key={} -> order {}", idempotencyKey, existing.id)
-                return existing
+            orders.findByIdempotencyKey(idempotencyKey)?.let {
+                log.info("idempotent replay for key={} -> order {}", idempotencyKey, it.id)
+                return view(it)
             }
         }
 
         val order = orders.save(
-            Order(
-                tripCode = tripCode,
-                qty = qty,
-                amountCents = qty * unitPriceCents,
-                buyerSub = buyerSub,
-                buyerEmail = buyerEmail,
-                idempotencyKey = idempotencyKey,
+            Order(buyerSub = buyerSub, buyerEmail = buyerEmail, idempotencyKey = idempotencyKey, status = OrderStatus.DRAFT),
+        )
+        meterRegistry.counter("orders_created_total").increment()
+        log.info("order {} draft created (buyer={})", order.id, buyerSub)
+        return view(order)
+    }
+
+    @Transactional
+    override fun addLeg(orderId: UUID, buyerSub: String, direction: LegDirection, tripCode: String, qty: Int): OrderView {
+        require(qty > 0) { "qty must be positive" }
+        val order = loadOwned(orderId, buyerSub)
+        check(order.status == OrderStatus.DRAFT || order.status == OrderStatus.HELD) {
+            "cannot add a leg to a ${order.status} order"
+        }
+        val current = legs.findByOrderId(orderId)
+        check(current.none { it.direction == direction && it.status in ACTIVE_LEG }) {
+            "a $direction leg is already on this booking"
+        }
+
+        legs.save(
+            OrderLeg(
+                orderId = orderId, direction = direction, tripCode = tripCode, qty = qty,
+                unitPriceCents = unitPriceCents, status = LegStatus.PENDING,
             ),
         )
-        val id = order.id.toString()
-        outbox.append(
-            Topics.ORDER_PLACED, id,
-            OrderPlacedEvent(
-                orderId = id, tripCode = tripCode, qty = qty, amountCents = order.amountCents,
-                buyerSub = buyerSub, buyerEmail = buyerEmail,
-            ),
-        )
-        // Business metric for the checkout SLIs (orders accepted = SLO denominator)
-        meterRegistry.counter("orders_placed_total").increment()
-        log.info("order {} placed (trip={}, qty={}, buyer={})", id, tripCode, qty, buyerSub)
+        // The first leg starts the backend-owned hold window and moves the booking DRAFT -> HELD.
+        if (order.status == OrderStatus.DRAFT) {
+            order.status = OrderStatus.HELD
+            order.expiresAt = Instant.now().plus(checkoutWindow)
+        }
+        touch(order)
+        // reserve-on-add: the seat hold for this leg is requested now (Inventory replies reservation-result later)
+        outbox.append(Topics.RESERVE_SEATS, order.id.toString(), ReserveSeatsCommand(order.id.toString(), tripCode, qty))
+        log.info("order {} added {} leg trip={} qty={} — reserve-seats emitted", orderId, direction, tripCode, qty)
+        return view(order)
+    }
+
+    @Transactional
+    override fun removeLeg(orderId: UUID, buyerSub: String, legId: UUID): OrderView {
+        val order = loadOwned(orderId, buyerSub)
+        check(order.status == OrderStatus.HELD) { "cannot remove a leg from a ${order.status} order" }
+        val leg = legs.findById(legId).orElseThrow { NoSuchElementException("unknown leg: $legId") }
+        require(leg.orderId == orderId) { "leg $legId does not belong to order $orderId" }
+
+        // Only a confirmed-held (RESERVED) leg needs an explicit give-back; a PENDING leg's inventory state is
+        // unknown here, so its hold (if any) is reclaimed by the inventory TTL reconciler instead of a racy release.
+        if (leg.status == LegStatus.RESERVED) {
+            outbox.append(Topics.RELEASE_SEATS, order.id.toString(), ReleaseSeatsCommand(order.id.toString(), leg.tripCode))
+        }
+        if (leg.status in ACTIVE_LEG) {
+            leg.status = LegStatus.RELEASED
+            touchLeg(leg)
+        }
+        // No active leg left -> the booking is empty again: back to DRAFT and clear the window.
+        if (legs.findByOrderId(orderId).none { it.status in ACTIVE_LEG }) {
+            order.status = OrderStatus.DRAFT
+            order.expiresAt = null
+        }
+        touch(order)
+        log.info("order {} removed leg {} ({})", orderId, legId, leg.direction)
+        return view(order)
+    }
+
+    @Transactional
+    override fun pay(orderId: UUID, buyerSub: String): OrderView {
+        val order = loadOwned(orderId, buyerSub)
+        // Idempotent repeat: once paying/paid, replay the current view instead of re-authorizing.
+        when (order.status) {
+            OrderStatus.PAYING, OrderStatus.AUTHORIZED, OrderStatus.CONFIRMED -> return view(order)
+            OrderStatus.HELD -> Unit
+            else -> throw BookingNotPayableException("order $orderId is ${order.status}, not payable")
+        }
+        // Backend-authoritative window re-check (never trust a client countdown).
+        val expiresAt = order.expiresAt ?: throw BookingNotPayableException("order $orderId has no active hold window")
+        if (!expiresAt.isAfter(Instant.now())) {
+            throw CheckoutWindowExpiredException("checkout window expired for order $orderId")
+        }
+
+        val orderLegs = legs.findByOrderId(orderId)
+        // Don't pay while a leg's reservation-result is still in flight — we must know each leg's fate first.
+        if (orderLegs.any { it.status == LegStatus.PENDING }) {
+            throw BookingNotPayableException("a reservation is still settling for order $orderId; retry")
+        }
+        val reserved = orderLegs.filter { it.status == LegStatus.RESERVED }
+        if (reserved.none { it.direction == LegDirection.OUTBOUND }) {
+            throw BookingNotPayableException("no reserved outbound leg to pay for on order $orderId")
+        }
+
+        val amount = reserved.sumOf { it.qty * it.unitPriceCents }
+        order.amountCents = amount
+        order.paymentInitiatedAt = Instant.now()
+        order.status = OrderStatus.PAYING
+        touch(order)
+        val items = reserved.map { it.toPaymentLineItem() }
+        outbox.append(Topics.AUTHORIZE_PAYMENT, order.id.toString(), AuthorizePaymentCommand(order.id.toString(), amount, items))
+        meterRegistry.counter("orders_pay_initiated_total").increment()
+        log.info("order {} pay initiated — authorize-payment {} emitted ({} leg(s))", orderId, amount, reserved.size)
+        return view(order)
+    }
+
+    @Transactional(readOnly = true)
+    override fun get(orderId: UUID): OrderView = view(load(orderId))
+
+    // --- helpers ---------------------------------------------------------------------------------------------
+
+    private fun view(order: Order) = OrderView(order, legs.findByOrderId(order.id))
+
+    private fun load(orderId: UUID): Order =
+        orders.findById(orderId).orElseThrow { NoSuchElementException("unknown order: $orderId") }
+
+    // Ownership: a buyer may only mutate their own booking. Don't leak existence -> a foreign order reads as 404.
+    private fun loadOwned(orderId: UUID, buyerSub: String): Order {
+        val order = load(orderId)
+        if (order.buyerSub != buyerSub) throw NoSuchElementException("unknown order: $orderId")
         return order
     }
 
-    // Read side: fetch an order by id or throw a domain not-found (turned into a 404 at the controller)
-    @Transactional(readOnly = true)
-    override fun get(orderId: UUID): Order =
-        orders.findById(orderId).orElseThrow { NoSuchElementException("unknown order: $orderId") }
+    private fun touch(order: Order) {
+        order.updatedAt = Instant.now()
+        orders.save(order)
+    }
+
+    private fun touchLeg(leg: OrderLeg) {
+        leg.updatedAt = Instant.now()
+        legs.save(leg)
+    }
+
+    private companion object {
+        // A leg the user still intends to buy (blocks re-adding the same direction; counts toward the displayed total).
+        val ACTIVE_LEG = setOf(LegStatus.PENDING, LegStatus.RESERVED, LegStatus.CONFIRMED)
+    }
 }

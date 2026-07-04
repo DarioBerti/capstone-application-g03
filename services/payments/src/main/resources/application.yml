@@ -65,10 +65,47 @@ app:
     # Expected `iss` claim on incoming tokens; SecurityConfig rejects tokens from any other issuer.
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
 
-# (mock) PSP decision rule: amounts at/above this threshold are DECLINED. Lets the demo exercise the saga
-# compensation path on demand (order a huge qty -> decline).
+# PSP provider selection: `mock` (default — deterministic threshold rule for dev/tests) or `paypal` (real
+# PayPal sandbox, opt-in via env in-cluster). The mock threshold is only consulted when provider=mock.
 payments:
+  provider: ${PAYMENTS_PROVIDER:mock}
+  # (mock) PSP decision rule: amounts at/above this threshold are DECLINED. Lets the demo exercise the saga
+  # compensation path on demand (order a huge qty -> decline).
   decline-threshold-cents: ${PAYMENTS_DECLINE_THRESHOLD_CENTS:100000}
+
+# PayPal Orders v2 (sandbox) — server-to-server card flow. Credentials + test card come from the config repo as
+# a SealedSecret (never hardcoded); base-url defaults to the sandbox host. Only consulted when provider=paypal.
+paypal:
+  base-url: ${PAYPAL_BASE_URL:https://api-m.sandbox.paypal.com}
+  client-id: ${PAYPAL_CLIENT_ID:}
+  client-secret: ${PAYPAL_CLIENT_SECRET:}
+  test-card:
+    number: ${PAYPAL_TEST_CARD_NUMBER:}
+    expiry: ${PAYPAL_TEST_CARD_EXPIRY:}
+    security-code: ${PAYPAL_TEST_CARD_CVV:}
+
+# Resilience (Pillar C) around the outbound PayPal call. Retry only retryable transport failures
+# (TransientPspException = 5xx/timeout/network); a DECLINE is a returned business outcome, never retried. When
+# the breaker is open the call fails fast — the throw rolls back the transaction so the Kafka retry/DLT + the
+# orders timeout sweeper re-drive the saga.
+resilience4j:
+  retry:
+    instances:
+      paypal:
+        max-attempts: 3
+        wait-duration: PT0.5S
+        retry-exceptions:
+          - it.g03.payments.gateway.TransientPspException
+  circuitbreaker:
+    instances:
+      paypal:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: PT10S
+        record-exceptions:
+          - it.g03.payments.gateway.TransientPspException
+        ignore-exceptions:
+          - it.g03.payments.gateway.PspException
 
 # Observability (Pillar D): K8s probes, Prometheus scrape endpoint, OTel tracing
 # OTLP endpoint is a local default; in-cluster it is overridden via env (MANAGEMENT_OTLP_TRACING_ENDPOINT) to point at the collector / Tempo

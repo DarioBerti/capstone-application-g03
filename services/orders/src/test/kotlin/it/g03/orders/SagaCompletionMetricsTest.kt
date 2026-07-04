@@ -2,6 +2,8 @@ package it.g03.orders
 
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.tracing.Tracer
+import it.g03.orders.entities.LegDirection
+import it.g03.orders.repository.OrderLegRepository
 import it.g03.orders.repository.OrderRepository
 import it.g03.orders.repository.OutboxEventRepository
 import it.g03.orders.service.OrderSaga
@@ -36,6 +38,7 @@ import kotlin.test.assertTrue
         "app.kafka-listeners-enabled=false",
         "app.timeout-sweeper.enabled=false", // sweepOnce() is driven directly
         "app.timeout-sweeper.deadline=PT30S",
+        "app.checkout.expiry-sweeper.enabled=false",
         "management.otlp.tracing.export.enabled=false", // real Tracer, no OTLP endpoint in tests
     ],
 )
@@ -43,10 +46,13 @@ import kotlin.test.assertTrue
 class SagaCompletionMetricsTest {
 
     private val trip = "FR9592-20260629"
+    private val buyer = "buyer-1"
+    private val email = "buyer@example.org"
 
     @Autowired lateinit var saga: OrderSaga
     @Autowired lateinit var orderService: OrderService
     @Autowired lateinit var orders: OrderRepository
+    @Autowired lateinit var legs: OrderLegRepository
     @Autowired lateinit var outbox: OutboxEventRepository
     @Autowired lateinit var sweeper: OrderTimeoutSweeper
     @Autowired lateinit var meterRegistry: MeterRegistry
@@ -55,10 +61,14 @@ class SagaCompletionMetricsTest {
     @BeforeEach
     fun cleanSlate() {
         outbox.deleteAll()
+        legs.deleteAll() // FK -> orders: delete children first
         orders.deleteAll()
     }
 
-    private fun place() = orderService.placeOrder(trip, 1, buyerSub = "buyer-1", buyerEmail = "buyer@example.org")
+    // A HELD one-way booking with a single PENDING outbound leg (the reserve-seats row is the outbox write the
+    // tracing tests inspect). The reservation-result is simulated per test by driving the saga directly.
+    private fun place() = orderService.createDraft(buyer, email, null).order
+        .also { orderService.addLeg(it.id, buyer, LegDirection.OUTBOUND, trip, 1) }
 
     private fun counter(name: String, vararg tags: String) =
         meterRegistry.find(name).tags(*tags).counter()?.count() ?: 0.0
@@ -66,10 +76,10 @@ class SagaCompletionMetricsTest {
     private fun overdueGauge() = meterRegistry.get("orders_overdue_nonterminal").gauge().value()
 
     private fun driveToConfirmed(id: UUID) {
-        saga.start(id)
-        saga.onReservationResult(id, "RESERVED")
+        saga.onReservationResult(id, trip, "RESERVED")
+        orderService.pay(id, buyer)
         saga.onPaymentResult(id, "AUTHORIZED")
-        saga.onSeatsConfirmed(id, "CONFIRMED")
+        saga.onSeatsConfirmed(id, trip, "CONFIRMED")
         saga.onPaymentCaptured(id)
     }
 
@@ -92,26 +102,20 @@ class SagaCompletionMetricsTest {
 
     @Test
     fun `each rejection reason increments orders_rejected_total under its own reason tag`() {
-        val soldOutBefore = counter("orders_rejected_total", "reason", "SOLD_OUT")
         val declinedBefore = counter("orders_rejected_total", "reason", "PAYMENT_DECLINED")
         val expiredBefore = counter("orders_rejected_total", "reason", "RESERVATION_EXPIRED")
 
-        val soldOut = place()
-        saga.start(soldOut.id)
-        saga.onReservationResult(soldOut.id, "SOLD_OUT")
-
         val declined = place()
-        saga.start(declined.id)
-        saga.onReservationResult(declined.id, "RESERVED")
+        saga.onReservationResult(declined.id, trip, "RESERVED")
+        orderService.pay(declined.id, buyer)
         saga.onPaymentResult(declined.id, "DECLINED")
 
         val expired = place()
-        saga.start(expired.id)
-        saga.onReservationResult(expired.id, "RESERVED")
+        saga.onReservationResult(expired.id, trip, "RESERVED")
+        orderService.pay(expired.id, buyer)
         saga.onPaymentResult(expired.id, "AUTHORIZED")
-        saga.onSeatsConfirmed(expired.id, "EXPIRED")
+        saga.onSeatsConfirmed(expired.id, trip, "EXPIRED")
 
-        assertEquals(soldOutBefore + 1.0, counter("orders_rejected_total", "reason", "SOLD_OUT"))
         assertEquals(declinedBefore + 1.0, counter("orders_rejected_total", "reason", "PAYMENT_DECLINED"))
         assertEquals(expiredBefore + 1.0, counter("orders_rejected_total", "reason", "RESERVATION_EXPIRED"))
     }
@@ -119,7 +123,8 @@ class SagaCompletionMetricsTest {
     @Test
     fun `the overdue gauge tracks stuck orders found by the last sweep and returns to zero`() {
         val order = place()
-        saga.start(order.id) // stays PENDING (awaiting reservation-result)
+        saga.onReservationResult(order.id, trip, "RESERVED")
+        orderService.pay(order.id, buyer) // PAYING: a resumable post-pay state the sweeper re-drives
         age(order.id, secondsAgo = 60)
 
         sweeper.sweepOnce()

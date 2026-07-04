@@ -66,6 +66,16 @@ server:
 app:
   # Flat demo pricing: looking prices up in Catalog would add a sync dependency to the money path that the track's interaction shape does not call for
   unit-price-cents: 1000
+  # Human-gated checkout: the backend-owned hold window. Stamped on the first leg add; re-checked server-side at
+  # pay and enforced by CheckoutExpirySweeper (never trust a client countdown). MUST be <= inventory.reservation.ttl
+  # so a reserve-on-add hold is not reclaimed by the inventory reconciler before the user can pay.
+  checkout:
+    window: PT15M
+    # Give-up-at-the-window sweeper: rejects HELD/PAYING bookings whose window elapsed (EXPIRED_NO_PAYMENT vs
+    # SERVICE_UNAVAILABLE by paymentInitiatedAt). Tests set enabled=false and drive the sweep/state machine directly.
+    expiry-sweeper:
+      enabled: true
+      poll-interval: PT5S
   # Expected `iss` claim on inbound tokens; SecurityConfig rejects tokens from any other issuer.
   oidc:
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
