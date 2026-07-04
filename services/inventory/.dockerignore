@@ -1,4 +1,4 @@
-# Keep the Docker build context small and clean (Lab01 Step 3).
+# Keep the Docker build context small and clean.
 # Exclude local build output, caches and VCS metadata.
 .gradle/
 build/

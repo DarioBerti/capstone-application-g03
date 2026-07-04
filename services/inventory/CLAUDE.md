@@ -1,3 +1,6 @@
+<!-- #DA ELIMINARE -->
+> **⚠️ TO BE DELETED (#DA ELIMINARE)** — Per-service guidance moved to Claude memory; the code is the source of truth. Kept for now; remove in one pass when the repo is final (grep `#DA ELIMINARE`).
+
 # Inventory Service — EuroTransit
 
 > Guidance for working in `inventory`. Cross-cutting conventions live in the root [CLAUDE.md](../../CLAUDE.md).

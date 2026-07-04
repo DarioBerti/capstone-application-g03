@@ -1,3 +1,6 @@
+<!-- #DA ELIMINARE -->
+> **⚠️ TO BE DELETED (#DA ELIMINARE)** — Internal audit not required by the spec; the design lives in the README. Kept for now; remove in one pass when the repo is final (grep `#DA ELIMINARE`).
+
 # Microservice Anti-Pattern Audit — EuroTransit (G03)
 
 **Scope:** the five services under `services/` (catalog, inventory, orders, payments,

@@ -1,3 +1,6 @@
+<!-- #DA ELIMINARE -->
+> **⚠️ TO BE DELETED (#DA ELIMINARE)** — Gap-analysis (2026-06-22) is superseded; the still-open items are in README §10. Kept for now; remove in one pass when the repo is final (grep `#DA ELIMINARE`).
+
 # EuroTransit Marketplace (g03) — Current-State Issues & Gap Analysis
 
 > **What this is.** A review of the **application repository** at its current state against the

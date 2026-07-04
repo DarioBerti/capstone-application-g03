@@ -1,3 +1,6 @@
+<!-- #DA ELIMINARE -->
+> **⚠️ TO BE DELETED (#DA ELIMINARE)** — Consolidated into the application repo README.md. Kept for now; remove in one pass when the repo is final (grep `#DA ELIMINARE`).
+
 # EuroTransit — Design del codice (application repo)
 
 > Documento **unico** e canonico del design **applicativo** (codice + dominio) di EuroTransit. Ogni scelta è
@@ -239,6 +242,10 @@ Col cutover async, i pattern **sincroni** Orders→Payments (circuit breaker / b
   `@CircuitBreaker/@Retry/@TimeLimiter` (Boot 4, `resilience4j-spring-boot4` + aspectj starter). Da ri-collocare come
   bulkhead = consumer group separati + `listener.concurrency`; retry = backoff **esponenziale + jitter**; autoscaling
   consumer = **KEDA** su lag (decisione team, vedi FASI_PROGETTO Fase 2).
+  > **In arrivo (branch `async-rework`, non ancora su `main`):** PayPal entra come **PSP reale** dietro
+  > `PaymentGateway` (il `MockPaymentGateway` resta selezionabile) → è la home concreta di questo breaker. Insieme
+  > arrivano lo **stream SSE** dello stato saga (notifications → frontend) e gli **order-legs + checkout-window**.
+  > Questa sezione si aggiorna a merge avvenuto; oggi il money path su `main` è mock-PSP.
 
 ## 7. Riferimenti
 - Infra / GitOps / osservabilità / progressive delivery: `../capstone-configuration-g03/docs/design.md`

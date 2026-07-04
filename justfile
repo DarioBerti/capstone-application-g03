@@ -9,7 +9,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 services := "catalog orders inventory payments notifications users"
 
 # TODO: cambiare in base al cluster usato
-# Container registry (matches Lab03/Lab04 convention)
+# Container registry
 registry := "lab02g03registry.azurecr.io"
 image_prefix := "eurotransit"
 

@@ -1,3 +1,6 @@
+<!-- #DA ELIMINARE -->
+> **⚠️ TO BE DELETED (#DA ELIMINARE)** — The agent-log is kept only in the configuration repo (curated to 7 entries). Kept for now; remove in one pass when the repo is final (grep `#DA ELIMINARE`).
+
 # Registro di verifica dell'agente — EuroTransit (g03)
 
 > **Cos'è.** Un registro dei casi concreti in cui un **artefatto prodotto da un agente** (codice,
