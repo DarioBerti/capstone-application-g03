@@ -80,19 +80,23 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Verify test results
+      - name: Verify results
+        # Key off job RESULTS, not the services JSON string: the `test` matrix is legitimately
+        # `skipped` when no service changed (nothing to test -> pass), so only a real test failure
+        # (or a failed change-detection) fails the gate. `if: always()` above runs this step even
+        # when `test` was skipped; needs.<job>.result gives the aggregate matrix outcome.
         env:
-          SERVICES: ${{ needs.detect-changes.outputs.services }}
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
           TEST_RESULT: ${{ needs.test.result }}
         run: |
-          # No service changed -> nothing to test -> pass.
-          if [ "$SERVICES" = "[]" ]; then
-            echo "No service changed; nothing to test."
-            exit 0
-          fi
-          # A skipped/failed/cancelled test job must fail the gate.
-          if [ "$TEST_RESULT" != "success" ]; then
-            echo "Test job result: $TEST_RESULT"
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "Change detection did not succeed (result: $DETECT_RESULT)."
             exit 1
           fi
-          echo "All changed-service tests passed."
+          # test is skipped when no service changed -> nothing to test -> pass.
+          if [ "$TEST_RESULT" = "success" ] || [ "$TEST_RESULT" = "skipped" ]; then
+            echo "PR checks passed (test result: $TEST_RESULT)."
+            exit 0
+          fi
+          echo "Changed-service tests failed (result: $TEST_RESULT)."
+          exit 1
