@@ -1,6 +1,3 @@
-<!-- #DA ELIMINARE -->
-> **⚠️ TO BE DELETED (#DA ELIMINARE)** — Frontend guidance moved to Claude memory; the code is the source of truth. Kept for now; remove in one pass when the repo is final (grep `#DA ELIMINARE`).
-
 # Frontend (debug SPA) — EuroTransit
 
 > Guidance for working in `frontend`. Cross-cutting conventions live in the root [CLAUDE.md](../CLAUDE.md).

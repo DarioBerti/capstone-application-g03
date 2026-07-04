@@ -1,6 +1,3 @@
-<!-- #DA ELIMINARE -->
-> **⚠️ TO BE DELETED (#DA ELIMINARE)** — Conventions moved to Claude memory; the code is the source of truth. Kept for now; remove in one pass when the repo is final (grep `#DA ELIMINARE`).
-
 # EuroTransit Marketplace — Application Repository
 
 A small, realistic **multi-service marketplace** (train-ticket sales) built to prove

@@ -71,6 +71,17 @@ outbox→Kafka publish is done by Debezium; see §5.)*
 
 ## 3. The money path — async Kafka command/reply saga (Pillar A)
 
+> **⚠️ Reworked on `main` (merged from `async-rework`) — this section is pending full reconciliation at
+> finalization.** The money path is now a two-phase, human-gated **booking**: create a DRAFT → add an outbound leg
+> (required) + an optional return leg, each **reserving seats on-add** and the first starting a backend-owned
+> **hold/checkout window** → **pay** within the window → the saga confirms every held leg and **captures once** →
+> CONFIRMED (or a terminal REJECTED). There is no `order-placed` trigger any more; the saga is triggered by the
+> synchronous add-leg (reserve) and pay (authorize). The PSP is **PayPal** (Orders v2 sandbox) behind a
+> `PaymentGateway` (`payments.provider = paypal|mock`). The reply-driven saga below (commands/replies, two-phase
+> confirm→capture, compensations, idempotency) is still accurate; the **entry/trigger** narrative is updated to the
+> booking flow in the finalized version. Authoritative source meanwhile: the per-service `CLAUDE.md` (orders,
+> inventory, payments).
+
 Orders accepts the POST **synchronously with `202 Accepted`** (persisting `Order(PENDING)` + the `order-placed`
 outbox row in **one** transaction), then **consumes its own `order-placed`** ("listen-to-yourself") and starts the
 saga. From there everything is **reply-driven**: Orders emits a **command**, the target service acts and answers with
@@ -173,6 +184,24 @@ incremented in the **terminal** transitions (a rejection is a *completed* saga: 
 outcomes), plus a gauge `orders_overdue_nonterminal` from the timeout sweeper (stuck orders are visible even at zero
 traffic). The alert is on the **terminal-ratio** and the gauge, never on the confirmed-ratio.
 
+## 5-bis. Client status stream (SSE) — booking status to the browser
+
+Merged from `async-rework`. Instead of the SPA polling for order status, the browser opens **one Server-Sent Events
+stream per order** and receives a booking snapshot every time the saga advances.
+- **Producer:** Orders emits a per-transition booking snapshot on a new topic **`order-status-changed`**.
+- **Relay:** Notifications' `OrderStatusListener` consumes it on its **own** consumer group (`notifications-sse`,
+  `auto.offset.reset=latest` — a fresh pod ignores history; the browser's initial state comes from the Orders HTTP
+  response, not a Kafka replay) and pushes the **verbatim snapshot JSON** to any open stream. Same never-throw sink
+  contract as the mail sink (a malformed payload is logged and skipped, never head-of-line-blocking).
+- **Hub:** `OrderStreamHub` is an **in-memory** registry of open connections keyed by `orderId`. Notifications is
+  single-replica by design, so one instance holds every connection **and** consumes every event — no cross-pod
+  fan-out (no Redis). It is ephemeral **connection** state only (no DB), consistent with the stateless contract:
+  losing it on a restart just drops the streams, which the SPA reconnects to (or degrades to polling from) —
+  **checkout is never affected**. A 15s heartbeat keeps the stream alive past a proxy idle timeout; the stream times
+  out at 20 min (> the 15-min hold window).
+- **Endpoint:** `GET /api/notifications/orders/{orderId}/events` (`text/event-stream`); a terminal
+  CONFIRMED/REJECTED closes the stream. Frontend consumer: `frontend/src/orderStream.ts`.
+
 ## 6. Resilience in the code (Pillar C)
 
 With the async cutover, the **synchronous** Orders→Payments patterns (circuit breaker / bulkhead / retry) were
@@ -191,10 +220,12 @@ With the async cutover, the **synchronous** Orders→Payments patterns (circuit 
 - **Where the breaker returns** — only around a **synchronous external egress** (a real PSP): there
   `@CircuitBreaker/@Retry/@TimeLimiter` (Boot 4, `resilience4j-spring-boot4` + aspectj). See the async-rework note.
 
-> **In flight (branch `async-rework`, not yet on `main`):** PayPal enters as a **real PSP** behind the
-> `PaymentGateway` interface (the mock stays selectable) → the concrete home of the egress breaker above; plus an
-> **SSE** stream of saga status (Notifications → the SPA) and **multi-leg orders + a checkout window**. This README's
-> money-path description is the current `main` (mock PSP); it is updated when that branch merges.
+> **Merged on `main` (from `async-rework`):** the egress breaker's home is now real — **PayPal** (Orders v2 sandbox)
+> behind the `PaymentGateway` interface (`payments.provider = paypal|mock`, the mock stays selectable for dev/tests),
+> with the outbound call bounded by timeouts + `@Retry`/`@CircuitBreaker`; a transient PSP/transport failure throws
+> (saga re-drives) while only a real processor decline is DECLINED. A `cancel-authorization` writes a **VOIDED
+> tombstone** so a compensation wins the race against a stale `authorize-payment` on the separate topic. See
+> `services/payments/CLAUDE.md`.
 
 ## 7. Database schema (database-per-service)
 
