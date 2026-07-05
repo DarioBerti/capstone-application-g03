@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Multi-stage build for the EuroTransit debug SPA.
+# Multi-stage build for the EuroTransit storefront SPA.
 #  - stage 1 builds the static bundle with Vite
 #  - stage 2 serves it via nginx with SPA history fallback
 # VITE_* are baked at BUILD time, so the Keycloak URL is a build-arg:
