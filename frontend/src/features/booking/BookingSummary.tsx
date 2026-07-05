@@ -29,6 +29,8 @@ export default function BookingSummary() {
   }
 
   const activeLegs = order.legs.filter((l) => ACTIVE_LEG.has(l.status))
+  const hasOutbound = activeLegs.some((l) => l.direction === 'OUTBOUND')
+  const hasReturn = activeLegs.some((l) => l.direction === 'RETURN')
 
   return (
     <div className="bg-surface-container-highest rounded-xl p-lg shadow-lg border border-primary/10">
@@ -43,6 +45,12 @@ export default function BookingSummary() {
         ))}
         {activeLegs.length === 0 && (
           <p className="font-body-sm text-body-sm text-on-surface-variant">No active legs.</p>
+        )}
+        {hasOutbound && !hasReturn && (
+          <p className="flex items-start gap-xs font-body-sm text-body-sm text-on-surface-variant">
+            <Icon name="swap_horiz" className="text-primary text-sm" />
+            One-way so far — pick a return trip from the results for a round trip.
+          </p>
         )}
       </div>
 
