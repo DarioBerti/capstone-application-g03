@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Authorization, Order, OrderStatus, RejectionReason } from '../types'
+import type { Order, OrderStatus, RejectionReason } from '../types'
 
 // The booking's progression, in order. DRAFT (no legs yet) precedes the window; the timeline lights up from HELD.
 const STEPS: OrderStatus[] = ['HELD', 'PAYING', 'AUTHORIZED', 'CONFIRMED']
@@ -21,7 +21,7 @@ const mmss = (total: number) => {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 
-export default function SagaTimeline({ order, auth }: { order: Order | null; auth: Authorization | null }) {
+export default function SagaTimeline({ order }: { order: Order | null }) {
   // Display-only countdown: seed from the server's remainingSeconds on every fresh order, then decrement
   // locally between polls so it ticks smoothly without a 1s poll. The backend stays the sole expiry authority.
   const [remaining, setRemaining] = useState<number | null>(null)
@@ -91,17 +91,6 @@ export default function SagaTimeline({ order, auth }: { order: Order | null; aut
         </dd>
         <dt>Amount</dt>
         <dd>{euro(order.amountCents)}</dd>
-        <dt>Payment</dt>
-        <dd>
-          {auth ? (
-            <span className={`badge ${auth.status.toLowerCase()}`}>
-              {auth.status}
-              {auth.replayed ? ' · replayed' : ''}
-            </span>
-          ) : (
-            <span className="muted">—</span>
-          )}
-        </dd>
       </dl>
     </section>
   )

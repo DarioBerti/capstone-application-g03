@@ -5,7 +5,7 @@ import SagaTimeline from './components/SagaTimeline'
 import { api } from './api'
 import { streamOrder } from './orderStream'
 import { currentUser, isAuthenticated, login, logout } from './auth'
-import type { Authorization, Order, OrderStatus, Profile } from './types'
+import type { Order, OrderStatus, Profile } from './types'
 
 const isTerminal = (s: OrderStatus) => s === 'CONFIRMED' || s === 'REJECTED'
 // "Live" = a state the backend can still transition on its own, so it is worth observing. A fresh DRAFT only
@@ -30,7 +30,6 @@ export default function App() {
   // it fresh so a leg flips PENDING->RESERVED (unlocking Pay) and the saga is observed to a terminal state.
   // The frontend is NEVER the authority on expiry — it only reflects the server's status/remainingSeconds.
   const [order, setOrder] = useState<Order | null>(null)
-  const [auth, setAuth] = useState<Authorization | null>(null)
   const authed = isAuthenticated()
   const [profile, setProfile] = useState<Profile | null>(null)
 
@@ -47,9 +46,6 @@ export default function App() {
     api.getMyProfile().then(setProfile).catch(() => setProfile(null))
   }, [authed])
 
-  // Clear a previous booking's authorization only when the booking itself changes.
-  useEffect(() => setAuth(null), [orderId])
-
   // Observe the booking to a terminal state over ONE SSE stream (Notifications pushes each saga transition),
   // rather than polling. Nothing runs for a DRAFT/terminal order (observe=false). If the stream can't be held
   // open — Notifications is off the critical path and allowed to be down — we DEGRADE to the adaptive poll.
@@ -60,15 +56,13 @@ export default function App() {
     let last: Order | null = order
     let pollTimer: number | null = null
 
-    // Reflect a fresh snapshot, and once a payment authorization row can exist (payment initiated AND the order
-    // has left PAYING) fetch it for the badge — never during PAYING / before pay, when the row would 404.
+    // Reflect a fresh snapshot. The payment outcome is conveyed by the order itself (status +
+    // rejectionReason=PAYMENT_DECLINED), so there's no separate internal payments call — in prod the
+    // SPA talks only to public services.
     const apply = (o: Order) => {
       if (cancelled) return
       last = o
       setOrder(o)
-      if (o.paymentInitiatedAt && o.status !== 'PAYING') {
-        api.getAuthorization(orderId).then((a) => { if (!cancelled) setAuth(a) }).catch(() => {})
-      }
     }
 
     // Fallback observer (only if the stream can't be held open): the adaptive backoff poll, terminal-aware.
@@ -123,7 +117,7 @@ export default function App() {
     <div className="app">
       <header className="app-head">
         <div className="app-head-row">
-          <h1>EuroTransit · Debug Console</h1>
+          <h1>EuroTransit</h1>
           <div className="auth-box">
             {authed ? (
               <>
@@ -136,9 +130,8 @@ export default function App() {
           </div>
         </div>
         <p className="muted">
-          Drives the two-phase booking saga across <b>catalog → orders → inventory → payments</b>: hold seats,
-          then pay within the backend-enforced window. Run the services locally and <code>just dev</code> here
-          (Vite proxies to them).
+          Book a journey with the two-phase, human-gated saga: hold your seats, then pay within the
+          backend-enforced window. Status updates stream live as the booking reaches a terminal state.
         </p>
       </header>
 
@@ -146,7 +139,7 @@ export default function App() {
         <main className="grid">
           <CatalogPanel onSelect={setTripCode} />
           <BookingPanel tripCode={tripCode} onTripCode={setTripCode} order={order} onOrder={setOrder} />
-          <SagaTimeline order={order} auth={auth} />
+          <SagaTimeline order={order} />
         </main>
       ) : (
         <main className="grid">

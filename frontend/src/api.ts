@@ -1,8 +1,8 @@
 import { getToken } from './auth'
-import type { Authorization, InventoryItem, LegDirection, Order, Page, Profile, Station, Trip } from './types'
+import type { Availability, LegDirection, Order, Page, Profile, Station, Trip } from './types'
 
-// All requests go to same-origin /api/* and are proxied to the right service by Vite (vite.config.ts).
-// The services are OAuth2 resource servers, so every call carries the user's Keycloak bearer token.
+// All requests go to same-origin /api/* — proxied by Vite in dev (vite.config.ts), routed by the Traefik
+// ingress in prod. The services are OAuth2 resource servers, so every call carries the Keycloak bearer token.
 async function authedFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = await getToken()
   const headers = new Headers(init.headers)
@@ -42,9 +42,6 @@ export const api = {
     return authedFetch(`/api/catalog/trips?${p.toString()}`).then((r) => json<Page<Trip>>(r))
   },
 
-  getTrip: (code: string): Promise<Trip> =>
-    authedFetch(`/api/catalog/trips/${encodeURIComponent(code)}`).then((r) => json<Trip>(r)),
-
   // Stations populate the origin/destination pickers for the trip filter.
   listStations: (): Promise<Station[]> =>
     authedFetch('/api/catalog/stations?size=100')
@@ -79,11 +76,12 @@ export const api = {
   getOrder: (orderId: string): Promise<Order> =>
     authedFetch(`/api/orders/${orderId}`).then((r) => json<Order>(r)),
 
-  listInventory: (): Promise<InventoryItem[]> =>
-    authedFetch('/api/inventory/items').then((r) => json<InventoryItem[]>(r)),
-
-  getAuthorization: (orderId: string): Promise<Authorization> =>
-    authedFetch(`/api/payments/authorizations/${orderId}`).then((r) => json<Authorization>(r)),
+  // Live seat-availability overlay for the browse view. Advisory/best-effort — the authoritative
+  // never-oversell guard is at reserve time. Public read via the ingress (paginated); returns the content.
+  getAvailability: (): Promise<Availability[]> =>
+    authedFetch('/api/inventory/availability?size=200')
+      .then((r) => json<Page<Availability>>(r))
+      .then((page) => page.content),
 
   // The caller's profile, provisioned just-in-time by the users service on first call.
   getMyProfile: (): Promise<Profile> =>
