@@ -3,6 +3,7 @@ package it.g03.inventory.config
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpMethod
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
@@ -31,6 +32,9 @@ class SecurityConfig {
         .authorizeHttpRequests { authz ->
             authz
                 .requestMatchers("/actuator/health/**", "/actuator/prometheus", "/actuator/info").permitAll()
+                // Public seat-count read for the storefront browse view. Only the availability projection is
+                // public; the raw-entity /items debug reads (and every write) stay authenticated.
+                .requestMatchers(HttpMethod.GET, "/api/inventory/availability", "/api/inventory/availability/**").permitAll()
                 .anyRequest().authenticated()
         }
         .oauth2ResourceServer { oauth2 -> oauth2.jwt {} }

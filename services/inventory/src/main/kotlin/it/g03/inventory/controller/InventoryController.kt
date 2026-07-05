@@ -31,6 +31,11 @@ class InventoryController(
     fun availability(@PageableDefault(size = 200) pageable: Pageable): Page<AvailabilityResponse> =
         service.availability(pageable)
 
+    // GET /api/inventory/availability/{tripCode} -> the public per-trip seat-availability projection (404 if unknown).
+    @GetMapping("/availability/{tripCode}")
+    fun availabilityFor(@PathVariable tripCode: String): AvailabilityResponse =
+        service.availabilityFor(tripCode)
+
     /** Availability snapshot: also used to verify the "never oversell" invariant in chaos runs */
     // GET /api/inventory/items/{tripCode} -> looks up a single trip's seat counts by its trip code
     @GetMapping("/items/{tripCode}")
