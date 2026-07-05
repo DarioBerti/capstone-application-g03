@@ -4,6 +4,7 @@ import it.g03.catalog.dto.StationResponse
 import it.g03.catalog.dto.TripFilter
 import it.g03.catalog.dto.TripResponse
 import it.g03.catalog.dto.toResponse
+import it.g03.catalog.entities.Station
 import it.g03.catalog.entities.Trip
 import it.g03.catalog.repository.StationRepository
 import it.g03.catalog.repository.TripRepository
@@ -45,10 +46,10 @@ class CatalogServiceImpl(
         return trip.toTripResponse(resolveStations(listOf(trip)))
     }
 
-    // Paginated station list (e.g. to populate origin/destination pickers).
+    // Paginated station list for the origin/destination pickers; an optional `q` typeahead matches name/city/code.
     @Transactional(readOnly = true)
-    override fun listStations(pageable: Pageable): Page<StationResponse> =
-        stations.findAll(pageable).map { it.toResponse() }
+    override fun listStations(q: String?, pageable: Pageable): Page<StationResponse> =
+        stations.findAll(stationSearch(q), pageable).map { it.toResponse() }
 
     // Bulk-load the stations referenced by a set of trips (no N+1), as response DTOs keyed by code.
     private fun resolveStations(trips: List<Trip>): Map<String, StationResponse> {
@@ -77,6 +78,23 @@ private fun TripFilter.toSpecification(): Specification<Trip> =
 
 private fun eq(attribute: String, value: Any): Specification<Trip> =
     Specification { root, _, cb -> cb.equal(root.get<Any>(attribute), value) }
+
+// Case-insensitive typeahead over a station's name/city/code; a null/blank q adds no predicate (lists all).
+private fun stationSearch(q: String?): Specification<Station> =
+    Specification.allOf(
+        listOfNotNull(
+            q?.takeIf { it.isNotBlank() }?.let { term ->
+                val like = "%${term.lowercase()}%"
+                Specification { root, _, cb ->
+                    cb.or(
+                        cb.like(cb.lower(root.get("name")), like),
+                        cb.like(cb.lower(root.get("city")), like),
+                        cb.like(cb.lower(root.get("code")), like),
+                    )
+                }
+            },
+        ),
+    )
 
 private fun departsAtOrAfter(t: OffsetDateTime): Specification<Trip> =
     Specification { root, _, cb -> cb.greaterThanOrEqualTo(root.get<OffsetDateTime>("departureTime"), t) }

@@ -63,4 +63,13 @@ class CatalogControllerTest {
     fun `unknown trip is a domain not-found error`() {
         assertFailsWith<NoSuchElementException> { controller.tripByCode("NO-SUCH-TRIP") }
     }
+
+    // Verifies the stations typeahead: filters by name/city/code, and lists all when q is absent.
+    @Test
+    fun `stations search filters by name city or code`() {
+        assertEquals(2, controller.listStations(null, PageRequest.of(0, 50)).totalElements.toInt())
+        val milan = controller.listStations("mil", PageRequest.of(0, 50))
+        assertEquals(1, milan.totalElements.toInt())
+        assertEquals("MIL", milan.content.single().code)
+    }
 }
