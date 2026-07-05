@@ -10,18 +10,24 @@ const LOW_SEAT_THRESHOLD = 10
 export default function TripCard({
   trip,
   availability,
-  onSelect,
+  onAction,
+  actionLabel,
+  actionDisabled,
   selecting,
   badge,
 }: {
   trip: Trip
   availability?: Availability
-  onSelect: (trip: Trip) => void
+  onAction: (trip: Trip) => void
+  // Contextual action: "Select" to start a booking, or "Add return" once an outbound is held (set by SearchPage).
+  actionLabel: string
+  actionDisabled?: boolean
   selecting?: boolean
   badge?: { label: string; tone: 'accent' | 'tertiary' }
 }) {
   const soldOut = availability != null && availability.available <= 0
   const low = availability != null && availability.available > 0 && availability.available <= LOW_SEAT_THRESHOLD
+  const disabled = soldOut || actionDisabled || selecting
 
   return (
     <div className="group bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-sm hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
@@ -57,11 +63,11 @@ export default function TripCard({
           {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
           {low && <Badge tone="warning">Only {availability!.available} left</Badge>}
           <button
-            onClick={() => onSelect(trip)}
-            disabled={soldOut || selecting}
+            onClick={() => onAction(trip)}
+            disabled={disabled}
             className="mt-xs w-full md:w-auto px-lg py-sm bg-primary text-on-primary rounded-lg font-bold hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-xs"
           >
-            {selecting ? <Spinner /> : soldOut ? 'Sold out' : 'Select'}
+            {selecting ? <Spinner /> : soldOut ? 'Sold out' : actionLabel}
           </button>
         </div>
       </div>

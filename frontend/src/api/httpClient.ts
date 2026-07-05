@@ -14,12 +14,15 @@ httpClient.interceptors.request.use(async (config) => {
   return config
 })
 
-// A 401 means the token was missing/rejected server-side — bounce to Keycloak. Everything else propagates so
-// the UI can render the failure (degrade, don't crash).
+// The storefront browses BEFORE sign-in: a 401 on a read (GET) must degrade (render empty/error), never force a
+// login redirect — otherwise the public homepage bounces to Keycloak. Only a failed *mutation* (an
+// unauthenticated user trying to book/pay) bounces to sign-in. An authed user whose token expired is already
+// re-logged-in by getToken() (updateToken) before the request goes out, so GETs never need a redirect here.
 httpClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    if (error.response?.status === 401) login()
+    const method = error.config?.method?.toLowerCase()
+    if (error.response?.status === 401 && method && method !== 'get') login()
     return Promise.reject(error)
   },
 )

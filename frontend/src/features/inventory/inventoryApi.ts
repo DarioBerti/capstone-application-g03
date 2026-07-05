@@ -1,19 +1,18 @@
 import { apiSlice } from '../../api/apiSlice'
 import type { Availability, Page } from '../../types'
 
-// Advisory, browse-time seat counts. Only the public bulk read is guaranteed routed; the per-trip lookup
-// (backend #5) may not exist yet, so we derive it from the bulk list until it lands.
+// Advisory, browse-time seat counts (public reads). The bulk list feeds the search-results overlay; the
+// per-trip lookup backs a single trip view.
 export const inventoryApi = apiSlice.injectEndpoints({
   endpoints: (build) => ({
     listAvailability: build.query<Availability[], void>({
-      query: () => ({ url: '/inventory/availability', params: { size: 200 } }),
+      // size capped at 100 (the services' max-page-size); the overlay only needs the current browse set.
+      query: () => ({ url: '/inventory/availability', params: { size: 100 } }),
       transformResponse: (page: Page<Availability>) => page.content,
       providesTags: ['Availability'],
     }),
-    getAvailability: build.query<Availability | undefined, string>({
-      query: () => ({ url: '/inventory/availability', params: { size: 200 } }),
-      transformResponse: (page: Page<Availability>, _meta, tripCode: string) =>
-        page.content.find((a) => a.tripCode === tripCode),
+    getAvailability: build.query<Availability, string>({
+      query: (tripCode) => ({ url: `/inventory/availability/${encodeURIComponent(tripCode)}` }),
       providesTags: ['Availability'],
     }),
   }),
