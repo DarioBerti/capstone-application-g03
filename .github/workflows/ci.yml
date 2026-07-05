@@ -3,7 +3,7 @@ name: CI - Build & Push images & Update GitOps configuration
 # CI builds and tests each changed service, pushes an immutable image (tagged with the commit SHA) to ACR, then updates the desired image tags in the configuration repository
 # CI NEVER talks to the cluster: Argo CD reconciles the Git change. No cluster credentials are ever present in this workflow!
 
-#TODO: Osservazione (non un bug): il job build esegue ./gradlew test e poi il docker build rifà gradlew build -x test → il codice si compila due volte (una in CI, una dentro l'immagine, senza cache condivisa). È il pattern del Lab, quindi lo teniamo per coerenza, ma sappi che è un costo. Se mai volessimo ottimizzare: buildare il jar in CI e fare solo COPY nel Dockerfile.
+#TODO: Osservazione (non un bug): il job build esegue ./gradlew test e poi il docker build rifà gradlew build -x test → il codice si compila due volte (una in CI, una dentro l'immagine, senza cache condivisa). È un pattern comune, tenuto per coerenza, ma sappi che è un costo. Se mai volessimo ottimizzare: buildare il jar in CI e fare solo COPY nel Dockerfile.
 
 on:
   push:

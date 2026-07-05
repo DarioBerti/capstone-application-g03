@@ -136,7 +136,7 @@ management:
 # The Orders -> Payments circuit breaker, the retry, and the bulkhead are RETIRED: the money path is now async
 # Kafka command/reply, so its resilience comes from temporal decoupling (Kafka buffering + bounded consumer
 # retry + DLT via KafkaErrorHandler + the timeout sweeper), not a synchronous breaker. Only the edge rate
-# limiter survives (it governs the sync POST /api/orders intake, which is unchanged). See docs/design.md.
+# limiter survives (it governs the sync POST /api/orders intake, which is unchanged). See the config repo README / docs/design.md.
 resilience4j:
   # Backpressure / load shedding at the synchronous intake (@RateLimiter on OrdersController.place). Once the
   # per-window budget is exhausted the public POST /api/orders is refused immediately with HTTP 429 + Retry-After

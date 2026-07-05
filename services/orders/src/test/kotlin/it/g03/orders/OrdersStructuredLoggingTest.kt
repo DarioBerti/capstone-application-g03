@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
  * §7.5 proof — "log strutturati (con traceId) per il perché". Proves the BEHAVIOUR (not "the config key is set"):
  * with Spring Boot 4's native structured logging engaged, a log line is valid ECS JSON AND carries the trace id
  * sitting in the MDC — i.e. the log<->trace correlation that lets you jump from a metric/alert to the exact
- * request's logs on the money path (deck 10, slide 9).
+ * request's logs on the money path.
  *
  * Why MDC directly: at runtime the micrometer-tracing bridge puts `traceId`/`spanId` into the SLF4J MDC whenever a
  * span is active (that part is framework-guaranteed and is what you SEE live in `kubectl logs`, §6). The part that

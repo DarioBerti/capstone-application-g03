@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Import
 import kotlin.test.assertTrue
 
 /**
- * §7.3 regression guard — "low cardinality". Deck 10 slide 15: *"high-cardinality labels destroy metrics
+ * §7.3 regression guard — "low cardinality": *"high-cardinality labels destroy metrics
  * systems"*. The convention (only `outcome`/`type`/`reason`/`dependency`/`status` labels, never `orderId`/
  * `traceId`/`userId`) is already followed; this test makes a future violation BUILD-BREAKING instead of a
  * silent prod cardinality explosion.

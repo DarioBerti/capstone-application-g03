@@ -39,7 +39,7 @@ class InventoryServiceImpl(
     /**
      * Idempotent atomic reservation -> dedup and decrement in the SAME transaction.
      *
-     * Why this is duplicate-proof (chaos #2/#4, see docs/design.md):
+     * Why this is duplicate-proof (chaos #2/#4, see the config repo README / docs/design.md):
      * - Fast path: a previous attempt for (orderId, tripCode) exists → return its stored outcome (replay) and RE-EMIT the reply (at-least-once reply recovery). A duplicated `reserve-seats` delivery is a no-op on the seat count but still answers Orders
      * - Race path: two duplicates run concurrently, both miss the pre-check and both decrement. The UNIQUE(order_id, trip_code) insert then fails for exactly one of them, rolling back THAT transaction including its decrement: only one commit, one decrement. The thrown duplicate-key error is self-healing -> the at-least-once redelivery replays and hits the fast path
      * - Concurrency between DIFFERENT orders is decided by the conditional UPDATE (`available >= qty`): the row lock serialises them; the loser gets 0 rows = sold out
