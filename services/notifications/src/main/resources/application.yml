@@ -29,6 +29,11 @@ app:
   oidc:
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
 
+# Orders base URL for the SSE ownership check (OrdersClient forwards the caller's token to GET /api/orders/{id}).
+# Local-dev default = orders' local port; in-cluster the chart injects ORDERS_BASE_URL (e.g. http://orders:8080).
+orders:
+  base-url: ${ORDERS_BASE_URL:http://localhost:8080}
+
 server:
   # Default local HTTP port
   port: 8080

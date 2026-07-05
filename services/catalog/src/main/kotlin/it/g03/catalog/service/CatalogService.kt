@@ -13,5 +13,7 @@ import org.springframework.data.domain.Pageable
 interface CatalogService {
     fun search(filter: TripFilter, pageable: Pageable): Page<TripResponse>
     fun byCode(code: String): TripResponse
-    fun listStations(pageable: Pageable): Page<StationResponse>
+
+    /** Paginated stations for the origin/destination pickers; an optional `q` typeahead matches name/city/code. */
+    fun listStations(q: String?, pageable: Pageable): Page<StationResponse>
 }

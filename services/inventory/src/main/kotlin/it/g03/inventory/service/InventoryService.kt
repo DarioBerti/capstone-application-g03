@@ -22,4 +22,7 @@ interface InventoryService {
 
     // Read-only seat-availability projection for the public storefront (paginated DTO, never the raw entity).
     fun availability(pageable: Pageable): Page<AvailabilityResponse>
+
+    // Per-trip seat-availability projection for the storefront trip view (unknown trip -> not-found).
+    fun availabilityFor(tripCode: String): AvailabilityResponse
 }

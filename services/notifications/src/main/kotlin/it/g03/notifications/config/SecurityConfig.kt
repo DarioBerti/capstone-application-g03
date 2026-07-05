@@ -13,10 +13,12 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import org.springframework.security.web.SecurityFilterChain
 
 /**
- * Notifications is an async edge sink with ONE authenticated surface: the per-user SSE stream
+ * Notifications is an async edge sink with an authenticated SSE surface: the per-user stream
  * (`GET /api/notifications/orders/{id}/events`) that relays saga updates to the browser. It validates the
- * caller's Keycloak token like the other resource servers; actuator stays open for probes/scraping. There is
- * no outbound oauth2-client wiring — this service never calls the money path (its "sink, not participant" rule).
+ * caller's Keycloak token like the other resource servers; actuator stays open for probes/scraping. The stream
+ * additionally verifies order ownership by calling Orders with the caller's own token (see OrdersClient) — a
+ * read-only authorization check, off the money path; there is still no outbound oauth2-client (service-token)
+ * wiring.
  */
 @Configuration
 class SecurityConfig {

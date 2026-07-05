@@ -159,6 +159,11 @@ class InventoryServiceImpl(
     override fun availability(pageable: Pageable): Page<AvailabilityResponse> =
         items.findAll(pageable).map { it.toResponse() }
 
+    @Transactional(readOnly = true)
+    override fun availabilityFor(tripCode: String): AvailabilityResponse =
+        items.findById(tripCode).map { it.toResponse() }
+            .orElseThrow { NoSuchElementException("unknown trip: $tripCode") }
+
     // Reply to a reserve-seats command via the outbox (REJECTED -> SOLD_OUT, every other outcome means seats were held -> RESERVED)
     private fun appendReservationResult(r: Reservation) {
         val status = if (r.status == ReservationStatus.REJECTED) STATUS_SOLD_OUT else STATUS_RESERVED

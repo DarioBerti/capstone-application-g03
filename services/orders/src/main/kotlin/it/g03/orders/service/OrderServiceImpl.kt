@@ -15,6 +15,8 @@ import it.g03.orders.repository.OrderRepository
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
@@ -158,7 +160,15 @@ class OrderServiceImpl(
     }
 
     @Transactional(readOnly = true)
-    override fun get(orderId: UUID): OrderView = view(load(orderId))
+    override fun get(orderId: UUID, buyerSub: String): OrderView = view(loadOwned(orderId, buyerSub))
+
+    @Transactional(readOnly = true)
+    override fun listForBuyer(buyerSub: String, pageable: Pageable): Page<OrderView> {
+        val page = orders.findByBuyerSub(buyerSub, pageable)
+        // Batch-load every page order's legs in one query, then pair them up — avoids an N+1 over the page.
+        val legsByOrder = legs.findByOrderIdIn(page.content.map { it.id }).groupBy { it.orderId }
+        return page.map { OrderView(it, legsByOrder[it.id] ?: emptyList()) }
+    }
 
     // --- helpers ---------------------------------------------------------------------------------------------
 

@@ -11,6 +11,7 @@ import org.springframework.data.web.PageableDefault
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -36,8 +37,11 @@ class CatalogController(private val service: CatalogService) {
     @GetMapping("/trips/{code}")
     fun tripByCode(@PathVariable code: String): TripResponse = service.byCode(code)
 
-    // GET /api/catalog/stations -> paginated station list (origin/destination pickers).
+    // GET /api/catalog/stations -> paginated station list (origin/destination pickers); ?q= typeahead over
+    // name/city/code.
     @GetMapping("/stations")
-    fun listStations(@PageableDefault(size = 50) pageable: Pageable): Page<StationResponse> =
-        service.listStations(pageable)
+    fun listStations(
+        @RequestParam(required = false) q: String?,
+        @PageableDefault(size = 50) pageable: Pageable,
+    ): Page<StationResponse> = service.listStations(q, pageable)
 }

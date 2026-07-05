@@ -12,4 +12,7 @@ interface OrderLegRepository : JpaRepository<OrderLeg, UUID> {
 
     /** The single leg for a (order, trip): maps a reservation-result / seats-confirmed reply to its leg. */
     fun findByOrderIdAndTripCode(orderId: UUID, tripCode: String): OrderLeg?
+
+    /** Batch-load legs for a page of bookings (the my-bookings list): one query instead of N. */
+    fun findByOrderIdIn(orderIds: Collection<UUID>): List<OrderLeg>
 }

@@ -3,6 +3,7 @@ package it.g03.catalog.config
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpMethod
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
@@ -30,6 +31,9 @@ class SecurityConfig {
         .authorizeHttpRequests { authz ->
             authz
                 .requestMatchers("/actuator/health/**", "/actuator/prometheus", "/actuator/info").permitAll()
+                // Public browse: the catalog is the pre-login storefront window (read-only). A token is still
+                // validated when present, but browsing trips/stations must not require sign-in.
+                .requestMatchers(HttpMethod.GET, "/api/catalog/**").permitAll()
                 .anyRequest().authenticated()
         }
         .oauth2ResourceServer { oauth2 -> oauth2.jwt {} }

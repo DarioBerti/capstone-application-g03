@@ -13,7 +13,9 @@ import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import kotlin.test.assertEquals
 
@@ -115,6 +117,40 @@ class OrdersControllerTest {
         mockMvc.perform(
             post("/api/orders/$id/pay").with(jwt().jwt { it.subject(sub) }),
         ).andExpect(status().isConflict)
+    }
+
+    // Buyer-scoping (IDOR guard): a buyer cannot read another buyer's order — it reads as 404, not leaking existence.
+    @Test
+    fun `GET another buyer's order is rejected with 404`() {
+        val foreignId = orderService.createDraft("other-buyer", "other@example.org", null).order.id
+        mockMvc.perform(get("/api/orders/$foreignId").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isNotFound)
+    }
+
+    // The owner can read their own booking.
+    @Test
+    fun `GET own order returns it`() {
+        val id = draftId()
+        mockMvc.perform(get("/api/orders/$id").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.orderId").value(id.toString()))
+    }
+
+    // My-bookings is buyer-scoped: it returns only the caller's own bookings, never another buyer's.
+    @Test
+    fun `GET my orders returns only the caller's bookings`() {
+        draftId()
+        draftId()
+        orderService.createDraft("other-buyer", "other@example.org", null)
+        mockMvc.perform(get("/api/orders").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalElements").value(2))
+    }
+
+    // My-bookings requires a valid token.
+    @Test
+    fun `GET my orders without a token is rejected with 401`() {
+        mockMvc.perform(get("/api/orders")).andExpect(status().isUnauthorized)
     }
 
     // Verifies idempotency at the HTTP edge: a retried create with the same Idempotency-Key yields ONE booking.

@@ -3,6 +3,8 @@ package it.g03.orders.service
 import it.g03.orders.entities.LegDirection
 import it.g03.orders.entities.Order
 import it.g03.orders.entities.OrderLeg
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import java.util.UUID
 
 /** An order together with its legs — the unit the controller maps to the API response (order + outbound/return). */
@@ -27,6 +29,9 @@ interface OrderService {
     /** Pay for the booking — backend re-checks the window, then authorizes the summed amount over the reserved legs. */
     fun pay(orderId: UUID, buyerSub: String): OrderView
 
-    /** Read side: the order plus its legs (lets clients observe legs, the window, and the terminal state). */
-    fun get(orderId: UUID): OrderView
+    /** Read side: the order plus its legs. Buyer-scoped — a foreign order reads as not-found (no existence leak). */
+    fun get(orderId: UUID, buyerSub: String): OrderView
+
+    /** "My bookings": the authenticated buyer's orders, paginated (scoped on buyer_sub). */
+    fun listForBuyer(buyerSub: String, pageable: Pageable): Page<OrderView>
 }

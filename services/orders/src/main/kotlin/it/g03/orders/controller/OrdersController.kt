@@ -6,6 +6,9 @@ import it.g03.orders.dto.OrderResponse
 import it.g03.orders.dto.toResponse
 import it.g03.orders.service.OrderService
 import jakarta.validation.Valid
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
+import org.springframework.data.web.PageableDefault
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -73,9 +76,17 @@ class OrdersController(
     ): ResponseEntity<OrderResponse> =
         ResponseEntity.status(HttpStatus.ACCEPTED).body(service.pay(orderId, buyerSub(jwt)).toResponse())
 
-    // GET /api/orders/{orderId} -> the booking with its legs, hold window, and terminal state.
+    // GET /api/orders -> the authenticated buyer's bookings (my-bookings), paginated.
+    @GetMapping
+    fun list(
+        @AuthenticationPrincipal jwt: Jwt,
+        @PageableDefault(size = 20) pageable: Pageable,
+    ): Page<OrderResponse> = service.listForBuyer(buyerSub(jwt), pageable).map { it.toResponse() }
+
+    // GET /api/orders/{orderId} -> the booking with its legs, hold window, and terminal state (buyer-scoped).
     @GetMapping("/{orderId}")
-    fun get(@PathVariable orderId: UUID): OrderResponse = service.get(orderId).toResponse()
+    fun get(@PathVariable orderId: UUID, @AuthenticationPrincipal jwt: Jwt): OrderResponse =
+        service.get(orderId, buyerSub(jwt)).toResponse()
 
     // Buyer identity comes from the validated token (guard a missing `sub` with a 400 instead of an NPE).
     private fun buyerSub(jwt: Jwt): String =
