@@ -6,66 +6,86 @@
 
 ## What this is
 
-A small **React + TypeScript + Vite** single-page app: the **storefront** for the EuroTransit money path —
-browse the catalog, place a booking, and watch the saga reach a terminal state. It is the **production
-frontend**, served in-cluster behind Traefik at `https://app.g03.cpo2026.it` (kind: `https://app.localhost`),
-and still runnable locally via Vite on `:5173`. In production it contacts **only public services** — catalog,
-orders, users, the secured notifications SSE stream, and the narrow public seat-availability read; the internal
-services (inventory writes, payments) are never called directly.
+The **production storefront** for the EuroTransit money path — browse the catalog, place a booking, pay within
+the hold window, and watch the saga reach a terminal state. **React + TypeScript + Vite**, styled with
+**Tailwind** (the "EuroTransit Signature" design system), state via **Redux Toolkit + RTK Query**, HTTP via
+**Axios**. Served in-cluster behind Traefik at `https://app.g03.cpo2026.it` (kind: `https://app.localhost`),
+runnable locally via Vite on `:5173`. In production it contacts **only public services** — catalog, orders,
+users, the secured notifications SSE stream, and the narrow public seat-availability read; the internal services
+(inventory writes, payments) are never called directly.
 
-Auth is **Keycloak via OAuth2 PKCE** (`keycloak-js`); every `/api/*` call carries the user's bearer
-token. Requests are same-origin `/api/<svc>` and reach the services through the Vite proxy (local) or the
-Traefik ingress (in-cluster). The backend services are OAuth2 resource servers — the SPA holds no secrets.
+Auth is **Keycloak via OAuth2 PKCE** (`keycloak-js`); every `/api/*` call carries the user's bearer token. The
+backend services are OAuth2 resource servers — the SPA holds no secrets.
+
+## Architecture
+
+- **Data layer = RTK Query over an Axios base query.** All REST goes through one Axios instance
+  (`api/httpClient.ts`) whose request interceptor attaches the Keycloak token and whose 401 handler bounces to
+  login. RTK Query (`api/apiSlice.ts` + per-feature `injectEndpoints`) owns caching, loading, and invalidation.
+  **Add endpoints there, one typed function per backend route; keep components thin.** No token is ever stored
+  in Redux — it always comes from `auth.ts`.
+- **SSE is deliberately NOT Axios.** The live booking stream (`orderStream.ts`) uses `fetch` +
+  ReadableStream because it must send the `Authorization` header on a `text/event-stream` (Axios/XHR can't
+  stream incrementally; `EventSource` can't set headers). Do not "unify" it into the Axios/RTK layer.
+- **Feature-first layout** under `src/features/<domain>/` (catalog, inventory, orders, booking, checkout,
+  search, home, profile); shared UI in `src/components/`, helpers in `src/lib/`.
 
 ## Invariants to protect
 
-- **The client owns idempotency for order placement.** A single "place order" intent must never create
-  more than one order, even across a double-click, a transparent network retry, or a re-submit after a
-  timeout. The intake (`POST /api/orders`) dedups on a client-supplied `Idempotency-Key` **header**, so
-  the SPA MUST mint that key and keep it stable across retries of the same intent. See the do/don't below.
-- **Identity comes from the token, never the form.** The buyer is taken from the validated JWT server-side;
-  never send buyer identity in the request body.
-- **No secrets in the SPA.** It's a public client (PKCE, no client secret); never embed credentials,
-  tokens-at-rest, or PSP data. Build-time config (e.g. the Keycloak URL) is non-secret only.
-- **Degrade, don't crash.** A failed/declined order or a down service is a normal outcome to render, not
-  an unhandled rejection. Surface the HTTP status/body to the user.
+- **The client owns idempotency for order placement.** A single "place order" intent must never create more
+  than one order — across a double-click, a transparent retry, or a re-submit after a timeout. The intake
+  (`POST /api/orders`) dedups on a client-supplied `Idempotency-Key` **header**. The `booking` slice mints and
+  holds that key: **one key per intent (outbound trip + qty), reused across retries, re-minted only when the
+  intent changes or after a terminal order.** Generate it with `crypto.randomUUID()`. Never put it in the body.
+- **Identity comes from the token, never the form.** The buyer is taken from the validated JWT server-side.
+- **Payment carries no PSP/card data.** `POST /api/orders/{id}/pay` is a one-click trigger; the PSP (PayPal
+  sandbox) authorizes server-to-server inside the payments service. The checkout card form is **cosmetic** —
+  validate for looks only, and **never transmit any card field**. No secrets or PSP data in the bundle.
+- **The hold window is backend-authoritative.** Countdowns are seeded from the order's `remainingSeconds` and
+  tick locally for display only (`useCountdown`). The backend re-checks at pay and sweeps at expiry — the UI is
+  never the authority on expiry.
+- **Degrade, don't crash.** A declined/expired/sold-out order is a normal outcome to render (see
+  `RejectedView` + `rejectionMessage`). SSE down ⇒ the observer falls back to adaptive-backoff polling
+  (`useOrderStream`); checkout is unaffected. Surface the HTTP status/body on error (`describeError`) — never
+  swallow it.
+- **Call only public services.** In prod the SPA speaks catalog, orders, users, the notifications SSE, and the
+  public `GET /api/inventory/availability`. Never `/api/inventory/items` or `/api/payments` directly — the
+  payment outcome is read from the order status.
 
-## Idempotency key — the rule
+## Design system
 
-The key exists to make a **retry of the same intent** replay the existing order instead of creating a
-second one. Only the client knows whether a request is a retry or a new order, so the client mints it.
-
-- **Mint one key per checkout intent**, tied to the order parameters (trip + quantity). Reuse the **same**
-  key while those are unchanged — a re-submit after a failure/timeout is a *retry* and must carry the same key.
-- **Mint a new key when the intent changes** (different trip or quantity) or **after a success** — the next
-  order is a genuinely new intent and must not replay the previous one.
-- Send it in the **`Idempotency-Key` request header**, not the JSON body (the backend reads the header;
-  `UNIQUE(idempotency_key)` is its hard backstop for a concurrent same-key race → 409, then replay).
-- Generate it with `crypto.randomUUID()` (the app is served over a secure context, so it's available).
-
-Do NOT rely on the backend to generate the key: on a lost response the server-minted key never reaches the
-client, so a retry would create a duplicate. This is a distinct dedup layer from the server-side outbox /
-consumer idempotency in the Kafka pipeline — don't conflate them.
+Tokens live in `tailwind.config.js` (the Stitch "EuroTransit Signature" export, transcribed verbatim):
+Material-style colour roles (`surface*`, `on-*`, `primary*`, `*-fixed`, `accent` = the CTA orange),
+role-named type scale (`text-display-lg`, `text-headline-md`, `text-label-tabular`, …) and spacing
+(`px-margin-desktop`, `gap-xl`, `max-w-max-width`, …). **Use the tokens, not raw hex/px.** Prices, times and
+countdowns use `tabular-nums` + the `label-tabular` role. Dark mode is a `.dark` class toggle
+(`lib/theme.ts` + `ThemeToggle`) defaulting to the OS setting — style both themes.
 
 ## Do
 
-- Keep API calls in `src/api.ts` (one typed function per endpoint); keep components thin.
-- Handle every request's error path explicitly and show the status + message.
-- Prefer `crypto.randomUUID()` and the platform `fetch`; avoid adding heavy dependencies for a debug tool.
+- Keep API calls in RTK Query endpoints (`features/*/*Api.ts`); keep components presentational.
+- Handle every request's error/empty/loading path explicitly (`components/ui/QueryStates.tsx`).
 - Type responses against `src/types.ts`; keep those shapes aligned with the services' DTOs.
+- Reuse the shared components (`TripCard`/`StationLine`, `SagaTracker`, `HoldWindowCard`, `Badge`, `Button`).
 
 ## Don't
 
 - Don't place an order without a stable `Idempotency-Key` for the attempt.
-- Don't put buyer identity, secrets, or PSP data in a request body or in the bundle.
-- Don't call internal services directly. In prod the SPA speaks only to public routes: seat counts come from
-  the public `GET /api/inventory/availability` read, and the payment outcome from the order status — never from
-  `/api/inventory/items` or `/api/payments`.
-- Don't swallow errors — an uncaught rejection hides a real backend problem the demo is meant to reveal.
+- Don't put buyer identity, secrets, or card/PSP data in a request body or the bundle.
+- Don't call internal services directly, and don't route SSE through Axios/RTK Query.
+- Don't hardcode colours/spacing outside the token scale; don't swallow errors.
+
+## Backend contract notes
+
+A few storefront reads may not be wired on the backend yet; the SPA is built to the target contract and
+degrades until they land: **my-bookings** (`GET /api/orders`, buyer-scoped), **per-trip availability**
+(`GET /api/inventory/availability/{tripCode}` — currently derived from the bulk list), **stations `?q=`
+typeahead** (currently client-side filtered), and **public browse** (catalog/availability without a token).
 
 ## Build & run
 
 - `just dev` — Vite dev server + `/api` proxy at `http://localhost:5173` (hot reload).
 - `just build` — `tsc --noEmit` type-check + production build into `dist/` (the type-check gates the build).
-- Prod image built + pushed by the app-repo CI (`build-frontend` job, bakes `VITE_KEYCLOAK_URL=https://auth.g03.cpo2026.it`);
-  the config repo chart deploys it (`frontend.enabled: true`). Kind image via the config repo's `just images-kind`.
+- `just test` — Vitest + Testing Library + MSW unit/integration tests.
+- Prod image built + pushed by the app-repo CI (`build-frontend` job, bakes `VITE_KEYCLOAK_URL`); the config
+  repo chart deploys it (`frontend.enabled: true`). Kind image via the config repo's `just images-kind`.

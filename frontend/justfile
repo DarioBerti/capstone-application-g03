@@ -1,6 +1,6 @@
-# EuroTransit debug frontend (React + Vite). Run from this folder: `just <recipe>`.
+# EuroTransit storefront (React + Vite + Tailwind + Redux Toolkit). Run from this folder: `just <recipe>`.
 # The browser hits this dev server only; Vite proxies /api/<svc> to the local JVMs
-# (catalog 8083, orders 8080, inventory 8081, payments 8082 — see vite.config.ts).
+# (catalog 8083, orders 8080, inventory 8081, payments 8082, users 8085, notifications 8084 — see vite.config.ts).
 # Requires: node + npm, just.
 
 # list recipes
@@ -18,6 +18,10 @@ dev: _ensure-deps
 # type-check + production build into dist/
 build: _ensure-deps
     npm run build
+
+# run the unit/integration tests (Vitest + Testing Library + MSW)
+test: _ensure-deps
+    npm run test
 
 # serve the production build locally to sanity-check it
 preview: build

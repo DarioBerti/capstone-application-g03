@@ -1,15 +1,23 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App'
+import { Provider } from 'react-redux'
+import { RouterProvider } from 'react-router-dom'
+import { store } from './app/store'
+import { router } from './routes/router'
 import { initAuth } from './auth'
-import './styles.css'
+import { initTheme } from './lib/theme'
+import './index.css'
 
-// Restore any existing SSO session before the first render so the UI knows immediately whether the user
-// is signed in (it never blocks behind a forced login — sign-in is an explicit action in the header).
+initTheme()
+
+// Restore any existing SSO session before the first render so the UI knows immediately whether the user is
+// signed in (it never blocks behind a forced login — sign-in is an explicit action in the header).
 initAuth().finally(() => {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-      <App />
+      <Provider store={store}>
+        <RouterProvider router={router} />
+      </Provider>
     </React.StrictMode>,
   )
 })
