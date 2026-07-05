@@ -24,7 +24,8 @@ jobs:
     name: Detect changed services
     runs-on: ubuntu-latest
     outputs:
-      services: ${{ steps.filter.outputs.changes }}
+      services: ${{ steps.changed.outputs.services }}
+      frontend_changed: ${{ steps.filter.outputs.frontend }}
     steps:
       # On pull_request events dorny/paths-filter diffs against the PR's base branch automatically,
       # so (unlike the push-triggered ci.yml) no fetch-depth:0 / manual base handling is needed.
@@ -43,6 +44,14 @@ jobs:
             payments:      'services/payments/**'
             notifications: 'services/notifications/**'
             users:         'services/users/**'
+            frontend:      'frontend/**'
+
+      # Strip `frontend` from the service list (it is not a Gradle service; it gets its own build check).
+      - name: Assemble changed-service list
+        id: changed
+        env:
+          CHANGES: ${{ steps.filter.outputs.changes }}
+        run: echo "services=$(echo "$CHANGES" | jq -c 'map(select(. != "frontend"))')" >> "$GITHUB_OUTPUT"
 
   # 2 — Run the test suite for each changed service (in parallel)
   test:
@@ -70,33 +79,55 @@ jobs:
         working-directory: services/${{ matrix.service }}
         run: ./gradlew test --no-daemon --console=plain
 
+  # 2b — Type-check + build the frontend on PRs that touch it (its CI test equivalent; no image push).
+  build-frontend-check:
+    name: Build frontend
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Type-check & build
+        working-directory: frontend
+        run: npm ci && npm run build
+
   # 3 — A single fixed-name gate so branch protection can require ONE required check regardless of
   # which services changed. The `test` matrix is skipped when no service changed (empty matrix), and
   # a skipped required check can silently unblock a merge; this job collapses the matrix result into
   # one deterministic pass/fail. `if: always()` lets it observe `test`'s outcome even when skipped.
   pr-checks:
     name: PR checks
-    needs: [detect-changes, test]
+    needs: [detect-changes, test, build-frontend-check]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Verify results
-        # Key off job RESULTS, not the services JSON string: the `test` matrix is legitimately
-        # `skipped` when no service changed (nothing to test -> pass), so only a real test failure
-        # (or a failed change-detection) fails the gate. `if: always()` above runs this step even
-        # when `test` was skipped; needs.<job>.result gives the aggregate matrix outcome.
+        # Key off job RESULTS, not the services JSON string: the `test`/`build-frontend-check` jobs are
+        # legitimately `skipped` when their area didn't change (nothing to check -> pass), so only a real
+        # failure (or a failed change-detection) fails the gate. `if: always()` above runs this step even
+        # when those were skipped; needs.<job>.result gives the aggregate outcome.
         env:
           DETECT_RESULT: ${{ needs.detect-changes.result }}
           TEST_RESULT: ${{ needs.test.result }}
+          FRONTEND_RESULT: ${{ needs.build-frontend-check.result }}
         run: |
           if [ "$DETECT_RESULT" != "success" ]; then
             echo "Change detection did not succeed (result: $DETECT_RESULT)."
             exit 1
           fi
-          # test is skipped when no service changed -> nothing to test -> pass.
-          if [ "$TEST_RESULT" = "success" ] || [ "$TEST_RESULT" = "skipped" ]; then
-            echo "PR checks passed (test result: $TEST_RESULT)."
-            exit 0
-          fi
-          echo "Changed-service tests failed (result: $TEST_RESULT)."
-          exit 1
+          # A job is skipped when its area didn't change -> nothing to check -> pass; only failure/cancelled fails.
+          for r in "test=$TEST_RESULT" "frontend=$FRONTEND_RESULT"; do
+            name="${r%%=*}"; res="${r#*=}"
+            if [ "$res" != "success" ] && [ "$res" != "skipped" ]; then
+              echo "$name check did not pass (result: $res)."
+              exit 1
+            fi
+          done
+          echo "PR checks passed (test=$TEST_RESULT, frontend=$FRONTEND_RESULT)."
+          exit 0

@@ -1,4 +1,4 @@
-# Frontend (debug SPA) — EuroTransit
+# Frontend (SPA) — EuroTransit
 
 > Guidance for working in `frontend`. Cross-cutting conventions live in the root [CLAUDE.md](../CLAUDE.md).
 > Principle-based on purpose: the code is the source of truth for components, routes, and API shapes —
@@ -6,10 +6,12 @@
 
 ## What this is
 
-A small **React + TypeScript + Vite** single-page app whose only job is to **exercise and observe the
-money path** end-to-end from a browser: browse the catalog, place an order, and watch the saga reach a
-terminal state. It is a **dev/demo tool, not a product surface** — hosted in-cluster on kind at
-`https://app.localhost` (and run locally via Vite on `:5173`), and **never deployed to AKS/prod**.
+A small **React + TypeScript + Vite** single-page app: the **storefront** for the EuroTransit money path —
+browse the catalog, place a booking, and watch the saga reach a terminal state. It is the **production
+frontend**, served in-cluster behind Traefik at `https://app.g03.cpo2026.it` (kind: `https://app.localhost`),
+and still runnable locally via Vite on `:5173`. In production it contacts **only public services** — catalog,
+orders, users, the secured notifications SSE stream, and the narrow public seat-availability read; the internal
+services (inventory writes, payments) are never called directly.
 
 Auth is **Keycloak via OAuth2 PKCE** (`keycloak-js`); every `/api/*` call carries the user's bearer
 token. Requests are same-origin `/api/<svc>` and reach the services through the Vite proxy (local) or the
@@ -56,11 +58,14 @@ consumer idempotency in the Kafka pipeline — don't conflate them.
 
 - Don't place an order without a stable `Idempotency-Key` for the attempt.
 - Don't put buyer identity, secrets, or PSP data in a request body or in the bundle.
-- Don't treat this SPA as production UI or ship it to prod (`frontend.enabled` is a dev-only chart flag).
+- Don't call internal services directly. In prod the SPA speaks only to public routes: seat counts come from
+  the public `GET /api/inventory/availability` read, and the payment outcome from the order status — never from
+  `/api/inventory/items` or `/api/payments`.
 - Don't swallow errors — an uncaught rejection hides a real backend problem the demo is meant to reveal.
 
 ## Build & run
 
 - `just dev` — Vite dev server + `/api` proxy at `http://localhost:5173` (hot reload).
 - `just build` — `tsc --noEmit` type-check + production build into `dist/` (the type-check gates the build).
-- In-cluster image is built + pushed by the config repo's `just images-kind` (bakes `VITE_KEYCLOAK_URL`).
+- Prod image built + pushed by the app-repo CI (`build-frontend` job, bakes `VITE_KEYCLOAK_URL=https://auth.g03.cpo2026.it`);
+  the config repo chart deploys it (`frontend.enabled: true`). Kind image via the config repo's `just images-kind`.

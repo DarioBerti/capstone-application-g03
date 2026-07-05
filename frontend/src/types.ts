@@ -8,7 +8,6 @@ export type RejectionReason =
   | 'RESERVATION_EXPIRED'
   | 'EXPIRED_NO_PAYMENT' // the hold window elapsed and the user never paid (user inaction)
   | 'SERVICE_UNAVAILABLE' // pay was accepted but the pipeline stalled past the window (system fault)
-export type AuthorizationStatus = 'AUTHORIZED' | 'DECLINED' | 'VOIDED'
 export type LegDirection = 'OUTBOUND' | 'RETURN'
 export type LegStatus = 'PENDING' | 'RESERVED' | 'SOLD_OUT' | 'CONFIRMED' | 'EXPIRED' | 'RELEASED'
 
@@ -69,21 +68,11 @@ export interface Order {
   paymentInitiatedAt: string | null
 }
 
-export interface InventoryItem {
+// Public seat-availability projection (mirrors inventory's AvailabilityResponse). Advisory browse-time counts.
+export interface Availability {
   tripCode: string
   totalSeats: number
   available: number
-}
-
-export interface Authorization {
-  authorizationId: string
-  orderId: string
-  amountCents: number
-  currency?: string
-  status: AuthorizationStatus
-  pspReference?: string | null
-  declineReason?: string | null
-  replayed: boolean
 }
 
 // The caller's app-side profile, owned by the users service (surrogate id + Keycloak subject natural key).

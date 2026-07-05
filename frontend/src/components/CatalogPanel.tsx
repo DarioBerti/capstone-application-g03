@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
-import type { InventoryItem, Station, Trip } from '../types'
+import type { Availability, Station, Trip } from '../types'
 
 const euro = (cents: number) => `${(cents / 100).toFixed(2)} €`
 // departureTime/arrivalTime are ISO-8601 with offset; show just the wall-clock HH:mm for the demo.
@@ -9,7 +9,7 @@ const hhmm = (iso: string) =>
 
 export default function CatalogPanel({ onSelect }: { onSelect: (tripCode: string) => void }) {
   const [trips, setTrips] = useState<Trip[]>([])
-  const [seats, setSeats] = useState<Record<string, InventoryItem>>({})
+  const [seats, setSeats] = useState<Record<string, Availability>>({})
   const [stations, setStations] = useState<Station[]>([])
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
@@ -25,10 +25,10 @@ export default function CatalogPanel({ onSelect }: { onSelect: (tripCode: string
     setLoading(true)
     setError(null)
     try {
-      // Inventory is best-effort here: catalog is the source of trips, seats are an overlay keyed on trip code.
+      // Availability is best-effort here: catalog is the source of trips, seat counts are an advisory overlay keyed on trip code.
       const [page, items] = await Promise.all([
         api.listTrips({ origin: origin || undefined, destination: destination || undefined, size: 50 }),
-        api.listInventory().catch(() => [] as InventoryItem[]),
+        api.getAvailability().catch(() => [] as Availability[]),
       ])
       setTrips(page.content)
       setSeats(Object.fromEntries(items.map((i) => [i.tripCode, i])))

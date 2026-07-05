@@ -29,6 +29,7 @@ jobs:
     # ${{ ... }} is the Actions expression syntax, evaluated before the step runs
     outputs:
       services: ${{ steps.changed.outputs.services }}
+      frontend_changed: ${{ steps.changed.outputs.frontend }}
       short_sha: ${{ steps.sha.outputs.short }}
     steps:
       # Check out the repository so the runner can inspect the code and compute path changes
@@ -53,6 +54,7 @@ jobs:
             payments:      'services/payments/**'
             notifications: 'services/notifications/**'
             users:         'services/users/**'
+            frontend:      'frontend/**'
 
       # Build the JSON list of services that should be processed by the build matrix
       - name: Assemble changed-service list
@@ -64,14 +66,19 @@ jobs:
         # reaches the shell intact.
         env:
           CHANGES: ${{ steps.filter.outputs.changes }}
+          FRONTEND: ${{ steps.filter.outputs.frontend }}
         run: |
-          # On manual dispatch, rebuild everything; otherwise use the changed services.
-          # `steps.filter.outputs.changes` (from dorny/paths-filter) is already a JSON array of the filter names that matched, e.g. ["orders","inventory"].
+          # On manual dispatch, rebuild every service; otherwise use the changed services.
+          # `steps.filter.outputs.changes` is a JSON array of ALL matched filter names — INCLUDING `frontend`,
+          # which is NOT a Gradle service and must be stripped so it never enters the build matrix. The frontend
+          # is tracked separately via `steps.filter.outputs.frontend` and built by its own job (build-frontend).
           # Writing `name=value` to $GITHUB_OUTPUT is how a step exports an output.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo 'services=["catalog","orders","inventory","payments","notifications"]' >> "$GITHUB_OUTPUT"
+            echo 'frontend=true' >> "$GITHUB_OUTPUT"
           else
-            echo "services=$CHANGES" >> "$GITHUB_OUTPUT"
+            echo "services=$(echo "$CHANGES" | jq -c 'map(select(. != "frontend"))')" >> "$GITHUB_OUTPUT"
+            echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
           fi
 
   # 2 — Test, build and push one image per changed service (in parallel)
@@ -127,11 +134,65 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-  # 3 — GitOps update: bump the image tags of the built services in the configuration repo
+  # 2b — Build & push the frontend image (the SPA is not a Gradle service, so it gets its own job, not the matrix).
+  # Mirrors the service build-push, but with a Node type-check/build gate and the prod VITE_KEYCLOAK_URL baked in.
+  build-frontend:
+    name: Build & push frontend
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Type-check + production bundle gate (npm run build = tsc --noEmit && vite build) — the frontend's CI test equivalent
+      - name: Type-check & build
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      # VITE_* are baked at image-build time; prod points the SPA at the real Keycloak host.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          build-args: |
+            VITE_KEYCLOAK_URL=https://auth.g03.cpo2026.it
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ needs.detect-changes.outputs.short_sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # 3 — GitOps update: bump the image tags of the built services (and the frontend) in the configuration repo
   update-gitops:
     name: Update GitOps values
-    needs: [detect-changes, build]
-    if: needs.build.result == 'success' && needs.detect-changes.outputs.services != '[]'
+    needs: [detect-changes, build, build-frontend]
+    # Run when at least one image was (re)built and neither build failed. `always()` is required because a
+    # frontend-only change SKIPS the service `build` matrix (and a service-only change skips build-frontend) —
+    # without it, update-gitops would be skipped whenever any of its needs was skipped.
+    if: >-
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      needs.build.result != 'failure' && needs.build.result != 'cancelled' &&
+      needs.build-frontend.result != 'failure' && needs.build-frontend.result != 'cancelled' &&
+      (needs.detect-changes.outputs.services != '[]' || needs.detect-changes.outputs.frontend_changed == 'true')
     runs-on: ubuntu-latest
     steps:
       # Check out the GitOps repository that stores the desired deployment state
@@ -144,17 +205,25 @@ jobs:
           token: ${{ secrets.CONFIG_REPO_PAT }}
           path: gitops
 
-      # Update the image tag for every service that was rebuilt in this pipeline run
-      - name: Bump image tags for built services
+      # Update the image tag for every service (and the frontend) rebuilt in this pipeline run
+      - name: Bump image tags for built images
         env:
           SHA: ${{ needs.detect-changes.outputs.short_sha }}
           SERVICES: ${{ needs.detect-changes.outputs.services }}
+          FRONTEND_CHANGED: ${{ needs.detect-changes.outputs.frontend_changed }}
         run: |
           VALUES=gitops/deploy/charts/eurotransit/values.yaml
-          for s in $(echo "$SERVICES" | yq -p=json -o=tsv '.[]'); do
-            echo "bumping $s -> $SHA"
-            yq e ".services.${s}.image.tag = \"${SHA}\"" -i "$VALUES"
-          done
+          if [ -n "$SERVICES" ] && [ "$SERVICES" != "[]" ]; then
+            for s in $(echo "$SERVICES" | yq -p=json -o=tsv '.[]'); do
+              echo "bumping services.$s -> $SHA"
+              yq e ".services.${s}.image.tag = \"${SHA}\"" -i "$VALUES"
+            done
+          fi
+          # The frontend tag is a TOP-LEVEL key (frontend.image.tag), not under services.*
+          if [ "$FRONTEND_CHANGED" = "true" ]; then
+            echo "bumping frontend -> $SHA"
+            yq e ".frontend.image.tag = \"${SHA}\"" -i "$VALUES"
+          fi
 
       # Commit and push the GitOps change so Argo CD can reconcile the new image tags
       - name: Commit and push
