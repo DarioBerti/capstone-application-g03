@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
+import org.springframework.data.domain.PageRequest
 import tools.jackson.databind.ObjectMapper
 import java.time.Instant
 import kotlin.test.assertEquals
@@ -217,5 +218,20 @@ class InventoryServiceTest {
     @Test
     fun `unknown trip is a 404-style domain error`() {
         assertFailsWith<NoSuchElementException> { service.reserve("order-1", "NO-SUCH-TRIP", 1) }
+    }
+
+    // Verifies the public availability projection returns a paginated DTO whose counts reflect live reservations
+    @Test
+    fun `availability returns live seat counts as a paginated DTO`() {
+        items.save(TripSeats(tripCode = "FR1000-20260701", totalSeats = 5, available = 5))
+        service.reserve("order-1", trip, 3) // trip: 10 -> 7
+
+        val page = service.availability(PageRequest.of(0, 200))
+
+        val byTrip = page.content.associateBy { it.tripCode }
+        assertEquals(2, page.totalElements.toInt())
+        assertEquals(7, byTrip.getValue(trip).available, "availability reflects the live decrement")
+        assertEquals(10, byTrip.getValue(trip).totalSeats)
+        assertEquals(5, byTrip.getValue("FR1000-20260701").available)
     }
 }

@@ -1,5 +1,7 @@
 package it.g03.inventory.service
 
+import it.g03.inventory.dto.AvailabilityResponse
+import it.g03.inventory.dto.toResponse
 import it.g03.inventory.entities.Reservation
 import it.g03.inventory.entities.ReservationStatus
 import it.g03.inventory.events.ReservationResultEvent
@@ -10,6 +12,8 @@ import it.g03.inventory.repository.TripSeatsRepository
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
@@ -149,6 +153,11 @@ class InventoryServiceImpl(
         }
         return overdue.size
     }
+
+    // Read-only availability projection for the public storefront; maps the entity to a DTO so the raw entity never leaks.
+    @Transactional(readOnly = true)
+    override fun availability(pageable: Pageable): Page<AvailabilityResponse> =
+        items.findAll(pageable).map { it.toResponse() }
 
     // Reply to a reserve-seats command via the outbox (REJECTED -> SOLD_OUT, every other outcome means seats were held -> RESERVED)
     private fun appendReservationResult(r: Reservation) {
