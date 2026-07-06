@@ -1,5 +1,6 @@
 package it.g03.catalog.service
 
+import it.g03.catalog.dto.DestinationSummaryResponse
 import it.g03.catalog.dto.StationResponse
 import it.g03.catalog.dto.TripFilter
 import it.g03.catalog.dto.TripResponse
@@ -10,6 +11,7 @@ import it.g03.catalog.repository.StationRepository
 import it.g03.catalog.repository.TripRepository
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Pageable
 import org.springframework.data.domain.Sort
 import org.springframework.data.jpa.domain.Specification
@@ -58,6 +60,16 @@ class CatalogServiceImpl(
     @Transactional(readOnly = true)
     override fun listAllStations(): List<StationResponse> =
         stations.findAll(Sort.by("name")).map { it.toResponse() }
+
+    // Aggregation lives in the repository query; here we normalise inputs (blank origin -> no filter) and
+    // clamp the limit, passing an unsorted page request so only the top-N ordered rows come back.
+    @Transactional(readOnly = true)
+    override fun topDestinations(origin: String?, limit: Int): List<DestinationSummaryResponse> =
+        trips.topDestinations(
+            OffsetDateTime.now(),
+            origin?.takeIf { it.isNotBlank() },
+            PageRequest.of(0, limit.coerceIn(1, 24)),
+        ).map { it.toResponse() }
 
     // Bulk-load the stations referenced by a set of trips (no N+1), as response DTOs keyed by code.
     private fun resolveStations(trips: List<Trip>): Map<String, StationResponse> {

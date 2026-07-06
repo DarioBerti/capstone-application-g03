@@ -1,5 +1,6 @@
 package it.g03.catalog.controller
 
+import it.g03.catalog.dto.DestinationSummaryResponse
 import it.g03.catalog.dto.StationResponse
 import it.g03.catalog.dto.TripFilter
 import it.g03.catalog.dto.TripResponse
@@ -56,4 +57,17 @@ class CatalogController(private val service: CatalogService) {
         ResponseEntity.ok()
             .cacheControl(CacheControl.maxAge(Duration.ofHours(6)).cachePublic())
             .body(service.listAllStations())
+
+    // GET /api/catalog/destinations/top -> the most-served upcoming destinations for the storefront's
+    // "popular destinations" strip (station + cheapest-from price + future-departure count). Optional ?origin=
+    // narrows to one departure hub; ?limit= (default 6) is clamped server-side to 1..24. Aggregated near-static
+    // data, so it's served with a public HTTP cache window.
+    @GetMapping("/destinations/top")
+    fun topDestinations(
+        @RequestParam(required = false) origin: String?,
+        @RequestParam(defaultValue = "6") limit: Int,
+    ): ResponseEntity<List<DestinationSummaryResponse>> =
+        ResponseEntity.ok()
+            .cacheControl(CacheControl.maxAge(Duration.ofMinutes(10)).cachePublic())
+            .body(service.topDestinations(origin, limit))
 }
