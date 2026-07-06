@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import { ErrorState, LoadingBlock, EmptyState } from '../../components/ui/QueryStates'
@@ -6,10 +6,12 @@ import SortTabs, { type SortKey } from './SortTabs'
 import TripCard from './TripCard'
 import InfoBento from './InfoBento'
 import QuickFilters from './QuickFilters'
+import ReturnSearchBar from './ReturnSearchBar'
+import { filterByTimeOfDay, returnQueryFor, type TimeOfDay } from './returnSearch'
 import BookingSummary from '../booking/BookingSummary'
 import { useBookingActions } from '../booking/useBookingActions'
 import { useAppSelector } from '../../app/hooks'
-import { useListTripsQuery, type TripQuery } from '../catalog/catalogApi'
+import { useGetTripQuery, useListTripsQuery, type TripQuery } from '../catalog/catalogApi'
 import { useListAvailabilityQuery } from '../inventory/inventoryApi'
 import type { Availability, Trip } from '../../types'
 
@@ -40,9 +42,6 @@ export default function SearchPage() {
   const [sort, setSort] = useState<SortKey>('cheapest')
   const [maxPriceCents, setMaxPriceCents] = useState<number | undefined>(undefined)
 
-  const query: TripQuery = { origin, destination, serviceDate, maxPriceCents }
-  const { data: page, isLoading, isError, error, refetch } = useListTripsQuery(query)
-  const { data: availability = [] } = useListAvailabilityQuery()
   const { startBooking, addReturn, starting } = useBookingActions()
 
   // Active in-progress booking (DRAFT/HELD) drives the round-trip flow: once an outbound leg is held, the
@@ -54,7 +53,31 @@ export default function SearchPage() {
   const hasReturn = activeLegs.some((l) => l.direction === 'RETURN')
   const awaitingReturn = !!outboundCode && !hasReturn
 
-  // Per-card action: normally "Select" (start outbound); once an outbound is held, the other trips become
+  // Resolve the held outbound trip so we can scope the return search to the reverse route (the leg only carries
+  // its tripCode). Public + cached, so this survives reloads.
+  const { data: outboundTrip } = useGetTripQuery(outboundCode ?? '', { skip: !outboundCode })
+
+  // The return leg gets its own date + time-of-day, independent of the outbound. Reset both whenever the
+  // outbound changes so a new selection starts a fresh return search.
+  const [returnDate, setReturnDate] = useState<string | undefined>(undefined)
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>('any')
+  useEffect(() => {
+    setReturnDate(undefined)
+    setTimeOfDay('any')
+  }, [outboundCode])
+
+  // While awaiting the return we search the reverse route (its own date); otherwise the URL-driven outbound
+  // search. Skip the fetch during the brief window where the outbound trip is still resolving, so we never
+  // flash the outbound-direction list.
+  const resolvingReturn = awaitingReturn && !outboundTrip
+  const query: TripQuery =
+    awaitingReturn && outboundTrip
+      ? returnQueryFor(outboundTrip, { date: returnDate, maxPriceCents })
+      : { origin, destination, serviceDate, maxPriceCents }
+  const { data: page, isLoading, isError, error, refetch } = useListTripsQuery(query, { skip: resolvingReturn })
+  const { data: availability = [] } = useListAvailabilityQuery()
+
+  // Per-card action: normally "Select" (start outbound); once an outbound is held, the trips become
   // "Add return"; the outbound trip itself and any card while the booking is already full are disabled.
   const cardAction = (trip: Trip): { label: string; disabled: boolean } => {
     if (outboundCode === trip.code) return { label: 'Selected', disabled: true }
@@ -83,21 +106,30 @@ export default function SearchPage() {
     }
   }
 
-  const trips = useMemo(() => sortTrips(page?.content ?? [], sort), [page, sort])
+  const sorted = useMemo(() => sortTrips(page?.content ?? [], sort), [page, sort])
+  const trips = useMemo(
+    () => (awaitingReturn ? filterByTimeOfDay(sorted, timeOfDay) : sorted),
+    [sorted, awaitingReturn, timeOfDay],
+  )
   const cheapest = trips.length ? Math.min(...trips.map((t) => t.priceCents)) : undefined
   const fastest = trips.length ? Math.min(...trips.map(durationMs)) : undefined
 
-  const routeLabel = origin && destination ? `${origin} → ${destination}` : 'All journeys'
+  const from = awaitingReturn && outboundTrip ? outboundTrip.destination.city : origin
+  const to = awaitingReturn && outboundTrip ? outboundTrip.origin.city : destination
+  const routeLabel = from && to ? `${from} → ${to}` : 'All journeys'
+  const showLoading = isLoading || resolvingReturn
 
   return (
     <main className="flex-grow max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop w-full py-xl">
       <div className="mb-xl flex flex-col md:flex-row md:items-end justify-between gap-md">
         <div>
-          <h1 className="font-display-lg text-display-lg-mobile text-on-background mb-xs">Select your journey</h1>
+          <h1 className="font-display-lg text-display-lg-mobile text-on-background mb-xs">
+            {awaitingReturn ? 'Pick your return' : 'Select your journey'}
+          </h1>
           <div className="flex items-center gap-sm text-on-surface-variant">
-            <span className="font-title-lg text-title-lg">{origin ?? 'Anywhere'}</span>
+            <span className="font-title-lg text-title-lg">{from ?? 'Anywhere'}</span>
             <Icon name="trending_flat" className="text-primary" />
-            <span className="font-title-lg text-title-lg">{destination ?? 'Anywhere'}</span>
+            <span className="font-title-lg text-title-lg">{to ?? 'Anywhere'}</span>
           </div>
         </div>
         <SortTabs value={sort} onChange={setSort} />
@@ -105,18 +137,20 @@ export default function SearchPage() {
 
       <div className="grid grid-cols-12 gap-gutter">
         <div className="col-span-12 lg:col-span-8 space-y-md">
-          {isLoading && <LoadingBlock label="Finding journeys…" />}
-          {isError && <ErrorState error={error} onRetry={refetch} />}
-          {!isLoading && !isError && trips.length === 0 && (
-            <EmptyState icon="search_off" title="No journeys found" hint={`Try a different date or route for ${routeLabel}.`} />
+          {awaitingReturn && outboundTrip && (
+            <ReturnSearchBar
+              route={{ from: outboundTrip.destination.city, to: outboundTrip.origin.city }}
+              date={returnDate ?? outboundTrip.serviceDate}
+              onDate={setReturnDate}
+              minDate={outboundTrip.serviceDate}
+              timeOfDay={timeOfDay}
+              onTimeOfDay={setTimeOfDay}
+            />
           )}
-          {awaitingReturn && (
-            <div className="flex items-center gap-sm p-md bg-secondary-container/40 border border-outline-variant/30 rounded-xl text-on-secondary-container">
-              <Icon name="swap_horiz" className="text-primary" />
-              <p className="font-body-sm text-body-sm">
-                Outbound held. Pick a return trip to make it round-trip, or proceed to checkout for one-way.
-              </p>
-            </div>
+          {showLoading && <LoadingBlock label="Finding journeys…" />}
+          {isError && <ErrorState error={error} onRetry={refetch} />}
+          {!showLoading && !isError && trips.length === 0 && (
+            <EmptyState icon="search_off" title="No journeys found" hint={`Try a different date or route for ${routeLabel}.`} />
           )}
           {trips.map((trip) => {
             const action = cardAction(trip)
