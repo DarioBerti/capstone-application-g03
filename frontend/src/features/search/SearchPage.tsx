@@ -5,8 +5,7 @@ import { ErrorState, LoadingBlock, EmptyState } from '../../components/ui/QueryS
 import SortTabs, { type SortKey } from './SortTabs'
 import TripCard from './TripCard'
 import DateStrip from './DateStrip'
-import ReturnSearchBar from './ReturnSearchBar'
-import { filterByTimeOfDay, returnQueryFor, type TimeOfDay } from './returnSearch'
+import { returnQueryFor } from './returnSearch'
 import BookingSummary from '../booking/BookingSummary'
 import { useBookingActions } from '../booking/useBookingActions'
 import { useAppSelector } from '../../app/hooks'
@@ -35,7 +34,10 @@ export default function SearchPage() {
   const serviceDate = params.get('serviceDate') ?? undefined
   const pax = Math.max(1, Number(params.get('pax') ?? '1'))
 
-  // The outbound date lives in the URL (shareable, refresh-safe); the strip rewrites just that param.
+  // The outbound is always a single day's search (the strip needs a selected day); default to today when
+  // the URL carries no date. Picking a day rewrites just that param (shareable, refresh-safe).
+  const today = todayIso()
+  const outboundDate = serviceDate ?? today
   const onServiceDate = (day: string) => {
     const next = new URLSearchParams(params)
     next.set('serviceDate', day)
@@ -59,13 +61,11 @@ export default function SearchPage() {
   // its tripCode). Public + cached, so this survives reloads.
   const { data: outboundTrip } = useGetTripQuery(outboundCode ?? '', { skip: !outboundCode })
 
-  // The return leg gets its own date + time-of-day, independent of the outbound. Reset both whenever the
-  // outbound changes so a new selection starts a fresh return search.
+  // The return leg gets its own date, independent of the outbound. Reset it whenever the outbound changes
+  // so a new selection starts a fresh return search.
   const [returnDate, setReturnDate] = useState<string | undefined>(undefined)
-  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>('any')
   useEffect(() => {
     setReturnDate(undefined)
-    setTimeOfDay('any')
   }, [outboundCode])
 
   // While awaiting the return we search the reverse route (its own date); otherwise the URL-driven outbound
@@ -75,7 +75,7 @@ export default function SearchPage() {
   const query: TripQuery =
     awaitingReturn && outboundTrip
       ? returnQueryFor(outboundTrip, { date: returnDate })
-      : { origin, destination, serviceDate }
+      : { origin, destination, serviceDate: outboundDate }
   const { data: page, isLoading, isError, error, refetch } = useListTripsQuery(query, { skip: resolvingReturn })
   const { data: availability = [] } = useListAvailabilityQuery()
 
@@ -108,11 +108,7 @@ export default function SearchPage() {
     }
   }
 
-  const sorted = useMemo(() => sortTrips(page?.content ?? [], sort), [page, sort])
-  const trips = useMemo(
-    () => (awaitingReturn ? filterByTimeOfDay(sorted, timeOfDay) : sorted),
-    [sorted, awaitingReturn, timeOfDay],
-  )
+  const trips = useMemo(() => sortTrips(page?.content ?? [], sort), [page, sort])
   // The URL params carry station CODES; resolve them to display names off the cached station list
   // (falling back to the raw code only for the brief first load).
   const { data: allStations = [] } = useListAllStationsQuery()
@@ -144,22 +140,20 @@ export default function SearchPage() {
 
       <div className="grid grid-cols-12 gap-lg">
         <div className="col-span-12 lg:col-span-8 space-y-md">
-          {!awaitingReturn && serviceDate && (
+          {!awaitingReturn && (
             <DateStrip
-              value={serviceDate}
+              value={outboundDate}
               onChange={onServiceDate}
-              minDate={todayIso()}
+              minDate={today}
               priceQuery={{ origin, destination }}
             />
           )}
           {awaitingReturn && outboundTrip && (
-            <ReturnSearchBar
-              date={returnDate ?? outboundTrip.serviceDate}
-              onDate={setReturnDate}
+            <DateStrip
+              value={returnDate ?? outboundTrip.serviceDate}
+              onChange={setReturnDate}
               minDate={outboundTrip.serviceDate}
               priceQuery={{ origin: outboundTrip.destination.code, destination: outboundTrip.origin.code }}
-              timeOfDay={timeOfDay}
-              onTimeOfDay={setTimeOfDay}
             />
           )}
           {showLoading && <LoadingBlock label="Finding journeys…" />}
