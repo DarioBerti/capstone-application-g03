@@ -82,7 +82,7 @@ class OrdersControllerTest {
             post("/api/orders/$id/legs")
                 .with(jwt().jwt { it.subject(sub) })
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"direction":"OUTBOUND","tripCode":"FR9592-20260629","qty":0}"""),
+                .content("""{"direction":"OUTBOUND","tripCode":"FR9592-20260629","qty":0,"priceToken":"t"}"""),
         ).andExpect(status().isBadRequest)
     }
 
@@ -94,7 +94,7 @@ class OrdersControllerTest {
             post("/api/orders/$id/legs")
                 .with(jwt().jwt { it.subject(sub) })
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"direction":"OUTBOUND","tripCode":"  ","qty":1}"""),
+                .content("""{"direction":"OUTBOUND","tripCode":"  ","qty":1,"priceToken":"t"}"""),
         ).andExpect(status().isBadRequest)
     }
 
@@ -106,7 +106,19 @@ class OrdersControllerTest {
             post("/api/orders/$id/legs")
                 .with(jwt().jwt { it.subject(sub) })
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"tripCode":"FR9592-20260629","qty":1}"""),
+                .content("""{"tripCode":"FR9592-20260629","qty":1,"priceToken":"t"}"""),
+        ).andExpect(status().isBadRequest)
+    }
+
+    // Verifies Bean Validation at the edge: a missing price quote is rejected with 400 (the leg can't be priced).
+    @Test
+    fun `adding a leg without a price quote is rejected with 400`() {
+        val id = draftId()
+        mockMvc.perform(
+            post("/api/orders/$id/legs")
+                .with(jwt().jwt { it.subject(sub) })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"direction":"OUTBOUND","tripCode":"FR9592-20260629","qty":1}"""),
         ).andExpect(status().isBadRequest)
     }
 

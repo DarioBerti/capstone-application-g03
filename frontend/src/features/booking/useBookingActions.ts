@@ -29,7 +29,7 @@ export function useBookingActions() {
   // hold window). Reuses the existing key when re-selecting the same trip on a still-live order (a retry);
   // mints a new one otherwise (a new intent).
   const startBooking = useCallback(
-    async (tripCode: string, qty: number): Promise<Order> => {
+    async (tripCode: string, qty: number, priceToken: string): Promise<Order> => {
       const isRetry = !!order && !isTerminal(order.status) && selectedTripCode === tripCode && !!idempotencyKey
       const key = isRetry ? idempotencyKey! : crypto.randomUUID()
       if (!isRetry) {
@@ -37,7 +37,7 @@ export function useBookingActions() {
         dispatch(tripSelected(tripCode))
       }
       const draft = await createDraft({ idempotencyKey: key }).unwrap()
-      const held = await addLeg({ orderId: draft.orderId, direction: 'OUTBOUND', tripCode, qty }).unwrap()
+      const held = await addLeg({ orderId: draft.orderId, direction: 'OUTBOUND', tripCode, qty, priceToken }).unwrap()
       dispatch(orderUpdated(held))
       return held
     },
@@ -45,8 +45,8 @@ export function useBookingActions() {
   )
 
   const addReturn = useCallback(
-    async (orderId: string, tripCode: string, qty: number): Promise<Order> => {
-      const updated = await addLeg({ orderId, direction: 'RETURN', tripCode, qty }).unwrap()
+    async (orderId: string, tripCode: string, qty: number, priceToken: string): Promise<Order> => {
+      const updated = await addLeg({ orderId, direction: 'RETURN', tripCode, qty, priceToken }).unwrap()
       dispatch(orderUpdated(updated))
       return updated
     },

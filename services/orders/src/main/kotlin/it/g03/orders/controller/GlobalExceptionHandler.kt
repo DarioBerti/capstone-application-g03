@@ -4,6 +4,7 @@ import io.github.resilience4j.ratelimiter.RateLimiterRegistry
 import io.github.resilience4j.ratelimiter.RequestNotPermitted
 import io.micrometer.core.instrument.MeterRegistry
 import it.g03.orders.dto.ErrorResponse
+import it.g03.orders.service.BadPriceQuoteException
 import it.g03.orders.service.BookingNotPayableException
 import it.g03.orders.service.CheckoutWindowExpiredException
 import org.springframework.dao.DataIntegrityViolationException
@@ -46,6 +47,11 @@ class GlobalExceptionHandler(
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
             ErrorResponse(e.bindingResult.fieldErrors.joinToString(", ") { "${it.field}: ${it.defaultMessage}" }),
         )
+
+    // The add-leg price quote is invalid (malformed / tampered / expired / wrong trip) → 400 bad input.
+    @ExceptionHandler(BadPriceQuoteException::class)
+    fun badPriceQuote(e: BadPriceQuoteException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ErrorResponse(e.message))
 
     // A well-formed request against a booking in the wrong state (add/remove a leg on a non-editable order) → 409.
     @ExceptionHandler(IllegalStateException::class)

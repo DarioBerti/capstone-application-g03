@@ -18,6 +18,7 @@ function tripAt(departureTime: string, over: Partial<Trip> = {}): Trip {
     arrivalTime: '2026-07-06T10:00:00+02:00',
     priceCents: 5900,
     currency: 'EUR',
+    priceToken: 'test.price.token',
     ...over,
   }
 }

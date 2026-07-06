@@ -24,6 +24,9 @@ data class AddLegRequest(
     @field:NotNull val direction: LegDirection,
     @field:NotBlank val tripCode: String,
     @field:Positive val qty: Int = 1,
+    // Signed browse-time price quote for this trip (from Catalog's trip response). Orders verifies it locally
+    // and snapshots the price onto the leg — no synchronous Catalog call on the money path.
+    @field:NotBlank val priceToken: String,
 )
 
 // One leg of the booking in the API response.

@@ -21,6 +21,7 @@ const tripPage: Page<Trip> = {
       arrivalTime: '2026-06-29T11:41:00Z',
       priceCents: 14200,
       currency: 'EUR',
+      priceToken: 'test.price.token',
     },
   ],
   totalElements: 1,
@@ -28,17 +29,11 @@ const tripPage: Page<Trip> = {
   number: 0,
   size: 20,
 }
-const stationPage: Page<Station> = {
-  content: [station('PAR', 'Paris'), station('AMS', 'Amsterdam')],
-  totalElements: 2,
-  totalPages: 1,
-  number: 0,
-  size: 100,
-}
+const allStations: Station[] = [station('PAR', 'Paris'), station('AMS', 'Amsterdam')]
 
 const server = setupServer(
   http.get('*/api/catalog/trips', () => HttpResponse.json(tripPage)),
-  http.get('*/api/catalog/stations', () => HttpResponse.json(stationPage)),
+  http.get('*/api/catalog/stations/all', () => HttpResponse.json(allStations)),
 )
 
 const makeStore = () =>
@@ -59,9 +54,9 @@ describe('catalogApi', () => {
     expect(result.content[0].carrierCode).toBe('Eurostar')
   })
 
-  test('listStations unwraps the Page into a plain content array', async () => {
+  test('listAllStations returns the full station array', async () => {
     const store = makeStore()
-    const stations = await store.dispatch(catalogApi.endpoints.listStations.initiate()).unwrap()
+    const stations = await store.dispatch(catalogApi.endpoints.listAllStations.initiate()).unwrap()
     expect(stations.map((s) => s.code)).toEqual(['PAR', 'AMS'])
   })
 })

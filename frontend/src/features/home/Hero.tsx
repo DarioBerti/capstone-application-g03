@@ -7,7 +7,7 @@ const HERO_IMAGE =
 
 export default function Hero() {
   return (
-    <section className="relative min-h-[680px] md:min-h-[780px] w-full flex items-center overflow-hidden bg-inverse-surface">
+    <section className="relative min-h-[680px] md:min-h-[780px] w-full flex items-center bg-inverse-surface">
       <div className="absolute inset-0 z-0">
         <img
           src={HERO_IMAGE}

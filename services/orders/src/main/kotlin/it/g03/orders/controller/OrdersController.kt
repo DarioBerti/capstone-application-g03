@@ -55,7 +55,7 @@ class OrdersController(
         @Valid @RequestBody request: AddLegRequest,
         @AuthenticationPrincipal jwt: Jwt,
     ): ResponseEntity<OrderResponse> {
-        val view = service.addLeg(orderId, buyerSub(jwt), request.direction, request.tripCode, request.qty)
+        val view = service.addLeg(orderId, buyerSub(jwt), request.direction, request.tripCode, request.qty, request.priceToken)
         return ResponseEntity.status(HttpStatus.CREATED).body(view.toResponse())
     }
 

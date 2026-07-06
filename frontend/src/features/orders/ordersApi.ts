@@ -6,6 +6,9 @@ export interface AddLegArgs {
   direction: LegDirection
   tripCode: string
   qty: number
+  // Signed price quote for this trip (from the trip's catalog response); the backend verifies it and snapshots
+  // the price onto the leg.
+  priceToken: string
 }
 
 export const ordersApi = apiSlice.injectEndpoints({
@@ -31,10 +34,10 @@ export const ordersApi = apiSlice.injectEndpoints({
       invalidatesTags: ['Order'],
     }),
     addLeg: build.mutation<Order, AddLegArgs>({
-      query: ({ orderId, direction, tripCode, qty }) => ({
+      query: ({ orderId, direction, tripCode, qty, priceToken }) => ({
         url: `/orders/${orderId}/legs`,
         method: 'POST',
-        data: { direction, tripCode, qty },
+        data: { direction, tripCode, qty, priceToken },
       }),
       invalidatesTags: (_r, _e, { orderId }) => [{ type: 'Order', id: orderId }],
     }),

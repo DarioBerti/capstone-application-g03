@@ -72,8 +72,8 @@ class OrderVersionConcurrencyTest {
     @Test
     fun `concurrent seats-confirmed replies for a round-trip capture exactly once`() {
         val order = orderService.createDraft(buyer, "buyer@example.org", null).order
-        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1)
-        orderService.addLeg(order.id, buyer, LegDirection.RETURN, tripReturn, 1)
+        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip))
+        orderService.addLeg(order.id, buyer, LegDirection.RETURN, tripReturn, 1, TestPriceQuotes.sign(tripReturn))
         saga.onReservationResult(order.id, trip, "RESERVED")
         saga.onReservationResult(order.id, tripReturn, "RESERVED")
         orderService.pay(order.id, buyer)
@@ -95,7 +95,7 @@ class OrderVersionConcurrencyTest {
     @Test
     fun `concurrent payment-captured emits exactly one order-confirmed`() {
         val order = orderService.createDraft(buyer, "buyer@example.org", null).order
-        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1)
+        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip))
         saga.onReservationResult(order.id, trip, "RESERVED")
         orderService.pay(order.id, buyer)
         saga.onPaymentResult(order.id, "AUTHORIZED")

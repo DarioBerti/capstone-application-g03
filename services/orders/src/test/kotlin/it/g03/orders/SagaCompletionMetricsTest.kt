@@ -68,7 +68,7 @@ class SagaCompletionMetricsTest {
     // A HELD one-way booking with a single PENDING outbound leg (the reserve-seats row is the outbox write the
     // tracing tests inspect). The reservation-result is simulated per test by driving the saga directly.
     private fun place() = orderService.createDraft(buyer, email, null).order
-        .also { orderService.addLeg(it.id, buyer, LegDirection.OUTBOUND, trip, 1) }
+        .also { orderService.addLeg(it.id, buyer, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip)) }
 
     private fun counter(name: String, vararg tags: String) =
         meterRegistry.find(name).tags(*tags).counter()?.count() ?: 0.0

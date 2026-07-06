@@ -32,6 +32,9 @@ data class TripResponse(
     val arrivalTime: OffsetDateTime,
     val priceCents: Long,
     val currency: String,
+    // Signed, short-lived price quote (JWS). The SPA carries it into add-leg so Orders can snapshot the price
+    // it verifies locally — no synchronous Catalog call on the money path.
+    val priceToken: String,
 )
 
 // Optional query filters for the paginated trip list. Null fields contribute no predicate, so an empty
@@ -49,8 +52,9 @@ data class TripFilter(
 // Entity -> response mappings, kept at the boundary.
 fun Station.toResponse() = StationResponse(code, name, city, country)
 
-// A Trip holds only origin/destination CODES; the service resolves the Station details and passes them in.
-fun Trip.toResponse(origin: StationResponse, destination: StationResponse) = TripResponse(
+// A Trip holds only origin/destination CODES; the service resolves the Station details and signs the price
+// quote, passing both in.
+fun Trip.toResponse(origin: StationResponse, destination: StationResponse, priceToken: String) = TripResponse(
     id = id,
     code = code,
     carrierCode = carrierCode,
@@ -62,4 +66,5 @@ fun Trip.toResponse(origin: StationResponse, destination: StationResponse) = Tri
     arrivalTime = arrivalTime,
     priceCents = priceCents,
     currency = currency,
+    priceToken = priceToken,
 )

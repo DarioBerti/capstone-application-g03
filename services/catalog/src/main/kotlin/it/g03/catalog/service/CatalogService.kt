@@ -16,4 +16,7 @@ interface CatalogService {
 
     /** Paginated stations for the origin/destination pickers; an optional `q` typeahead matches name/city/code. */
     fun listStations(q: String?, pageable: Pageable): Page<StationResponse>
+
+    /** Every station, name-sorted — a cacheable bulk read for the storefront's load-once, filter-locally picker. */
+    fun listAllStations(): List<StationResponse>
 }

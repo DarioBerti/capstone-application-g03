@@ -11,6 +11,7 @@ import it.g03.catalog.repository.TripRepository
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
+import org.springframework.data.domain.Sort
 import org.springframework.data.jpa.domain.Specification
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -27,6 +28,7 @@ import java.time.OffsetDateTime
 class CatalogServiceImpl(
     private val trips: TripRepository,
     private val stations: StationRepository,
+    private val priceQuoteSigner: PriceQuoteSigner,
 ) : CatalogService {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -51,14 +53,25 @@ class CatalogServiceImpl(
     override fun listStations(q: String?, pageable: Pageable): Page<StationResponse> =
         stations.findAll(stationSearch(q), pageable).map { it.toResponse() }
 
+    // Full station list (name-sorted) for the storefront's load-once, filter-locally picker; small, near-static
+    // reference data served with HTTP caching at the controller.
+    @Transactional(readOnly = true)
+    override fun listAllStations(): List<StationResponse> =
+        stations.findAll(Sort.by("name")).map { it.toResponse() }
+
     // Bulk-load the stations referenced by a set of trips (no N+1), as response DTOs keyed by code.
     private fun resolveStations(trips: List<Trip>): Map<String, StationResponse> {
         val codes = trips.flatMap { listOf(it.originCode, it.destinationCode) }.toSet()
         return stations.findAllById(codes).associate { it.code to it.toResponse() }
     }
 
+    // ES256 signing is sub-millisecond, so signing a fresh quote per row (up to a page) on each browse is negligible.
     private fun Trip.toTripResponse(stationsByCode: Map<String, StationResponse>): TripResponse =
-        toResponse(stationsByCode.getValue(originCode), stationsByCode.getValue(destinationCode))
+        toResponse(
+            stationsByCode.getValue(originCode),
+            stationsByCode.getValue(destinationCode),
+            priceQuoteSigner.sign(code, priceCents, currency),
+        )
 }
 
 // Builds a composable Specification from the filter. Each clause is added only when its field is present,
