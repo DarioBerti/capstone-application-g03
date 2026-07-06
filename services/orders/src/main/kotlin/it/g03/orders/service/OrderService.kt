@@ -20,8 +20,11 @@ interface OrderService {
     /** Create an empty DRAFT booking for the authenticated buyer (idempotent on the client key). */
     fun createDraft(buyerSub: String, buyerEmail: String?, idempotencyKey: String?): OrderView
 
-    /** Add a leg (reserve-on-add). The first leg starts the hold window and moves the order DRAFT -> HELD. */
-    fun addLeg(orderId: UUID, buyerSub: String, direction: LegDirection, tripCode: String, qty: Int): OrderView
+    /**
+     * Add a leg (reserve-on-add). The first leg starts the hold window and moves the order DRAFT -> HELD. The
+     * leg is priced from [priceToken] — the signed browse-time quote for [tripCode] — verified locally.
+     */
+    fun addLeg(orderId: UUID, buyerSub: String, direction: LegDirection, tripCode: String, qty: Int, priceToken: String): OrderView
 
     /** Remove a leg (releasing its hold); if no active leg remains the order reverts to DRAFT and the window clears. */
     fun removeLeg(orderId: UUID, buyerSub: String, legId: UUID): OrderView

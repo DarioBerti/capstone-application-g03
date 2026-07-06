@@ -4,7 +4,6 @@ import Icon from '../../components/Icon'
 import { ErrorState, LoadingBlock, EmptyState } from '../../components/ui/QueryStates'
 import SortTabs, { type SortKey } from './SortTabs'
 import TripCard from './TripCard'
-import InfoBento from './InfoBento'
 import QuickFilters from './QuickFilters'
 import ReturnSearchBar from './ReturnSearchBar'
 import { filterByTimeOfDay, returnQueryFor, type TimeOfDay } from './returnSearch'
@@ -97,9 +96,9 @@ export default function SearchPage() {
     setPendingTrip(trip.code)
     try {
       if (awaitingReturn && activeOrder) {
-        await addReturn(activeOrder.orderId, trip.code, pax)
+        await addReturn(activeOrder.orderId, trip.code, pax, trip.priceToken)
       } else {
-        await startBooking(trip.code, pax)
+        await startBooking(trip.code, pax, trip.priceToken)
       }
     } finally {
       setPendingTrip(null)
@@ -173,7 +172,6 @@ export default function SearchPage() {
               />
             )
           })}
-          {trips.length > 0 && <InfoBento />}
         </div>
 
         <aside className="col-span-12 lg:col-span-4">

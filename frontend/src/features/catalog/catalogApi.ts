@@ -33,13 +33,14 @@ export const catalogApi = apiSlice.injectEndpoints({
       query: (code) => ({ url: `/catalog/trips/${encodeURIComponent(code)}` }),
       providesTags: ['Trip'],
     }),
-    // Stations feed the origin/destination pickers. `q` typeahead needs backend #6; until then the caller
-    // fetches the (small) list and filters client-side — sending `q` is harmless (Spring ignores it).
-    listStations: build.query<Station[], string | void>({
-      query: (q) => ({ url: '/catalog/stations', params: { size: 100, ...(q ? { q } : {}) } }),
-      transformResponse: (page: Page<Station>) => page.content,
+    // The full station list feeds the origin/destination pickers, which load it once and filter locally.
+    // Small, near-static reference data: cached for the session (long keepUnusedDataFor) on top of the
+    // endpoint's own HTTP cache window, so the pickers never re-fetch mid-session.
+    listAllStations: build.query<Station[], void>({
+      query: () => ({ url: '/catalog/stations/all' }),
+      keepUnusedDataFor: 86400,
     }),
   }),
 })
 
-export const { useListTripsQuery, useGetTripQuery, useListStationsQuery } = catalogApi
+export const { useListTripsQuery, useGetTripQuery, useListAllStationsQuery } = catalogApi

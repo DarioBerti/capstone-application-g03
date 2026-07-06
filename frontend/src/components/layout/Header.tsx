@@ -33,9 +33,6 @@ export default function Header() {
             <a className="font-body-md text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#">
               Rail Passes
             </a>
-            <a className="font-body-md text-body-md text-on-surface-variant hover:text-primary transition-colors" href="#">
-              Help
-            </a>
           </div>
         </div>
         <div className="flex items-center gap-md">

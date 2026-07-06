@@ -81,6 +81,33 @@
   background: #00685f;
 }
 
+/* Native date inputs draw their own calendar button on the right, which collides with our custom
+   left icon (two calendars) and steals width from the value text in narrow fields. Overlay it as a
+   full-field, invisible click target (positioned against the field's `.relative` wrapper) so only the
+   design-system left icon shows and the whole field still opens the picker. */
+input[type='date']::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+/* The rendered date value/placeholder lives in browser-internal pieces that don't reliably inherit the
+   field's font or colour — force them to, so date fields match the plain text inputs (From/To). */
+input[type='date']::-webkit-datetime-edit,
+input[type='date']::-webkit-datetime-edit-fields-wrapper {
+  font: inherit;
+  color: inherit;
+  padding: 0;
+}
+/* A text <input list> (station typeahead) shows a native dropdown-arrow button; hide it. Typing still
+   filters the datalist suggestions — only the always-visible button is removed. */
+input[list]::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

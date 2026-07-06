@@ -66,8 +66,10 @@ class OrderSagaTest {
     }
 
     private fun draft() = orderService.createDraft(buyer, email, null).order
-    private fun addOutbound(id: UUID, code: String = trip, qty: Int = 1) = orderService.addLeg(id, buyer, LegDirection.OUTBOUND, code, qty)
-    private fun addReturn(id: UUID, code: String = tripReturn, qty: Int = 1) = orderService.addLeg(id, buyer, LegDirection.RETURN, code, qty)
+    private fun addOutbound(id: UUID, code: String = trip, qty: Int = 1) =
+        orderService.addLeg(id, buyer, LegDirection.OUTBOUND, code, qty, TestPriceQuotes.sign(code))
+    private fun addReturn(id: UUID, code: String = tripReturn, qty: Int = 1) =
+        orderService.addLeg(id, buyer, LegDirection.RETURN, code, qty, TestPriceQuotes.sign(code))
     private fun statusOf(id: UUID) = orders.findById(id).orElseThrow().status
     private fun rejectionOf(id: UUID) = orders.findById(id).orElseThrow().rejectionReason
     private fun legStatus(id: UUID, code: String) = legs.findByOrderIdAndTripCode(id, code)?.status

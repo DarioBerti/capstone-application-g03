@@ -72,4 +72,12 @@ class CatalogControllerTest {
         assertEquals(1, milan.totalElements.toInt())
         assertEquals("MIL", milan.content.single().code)
     }
+
+    // Verifies the load-once picker feed: returns every station, name-sorted, unpaged.
+    @Test
+    fun `lists all stations name-sorted`() {
+        val all = controller.listAllStations().body ?: error("expected a body")
+        assertEquals(listOf("Milano Centrale", "Torino Porta Nuova"), all.map { it.name })
+        assertEquals(listOf("MIL", "TRN"), all.map { it.code })
+    }
 }

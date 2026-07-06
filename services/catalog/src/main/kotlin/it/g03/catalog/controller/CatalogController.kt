@@ -8,11 +8,14 @@ import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.domain.Sort
 import org.springframework.data.web.PageableDefault
+import org.springframework.http.CacheControl
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.time.Duration
 
 /**
  * Public read API (exposed through the ingress at /api/catalog). Read-mostly and tolerant of staleness
@@ -44,4 +47,13 @@ class CatalogController(private val service: CatalogService) {
         @RequestParam(required = false) q: String?,
         @PageableDefault(size = 50) pageable: Pageable,
     ): Page<StationResponse> = service.listStations(q, pageable)
+
+    // GET /api/catalog/stations/all -> the full station list for the storefront's load-once, filter-locally
+    // picker. Small, near-static reference data (changes only on a new deploy), so it's served with a public
+    // HTTP cache window rather than paginated.
+    @GetMapping("/stations/all")
+    fun listAllStations(): ResponseEntity<List<StationResponse>> =
+        ResponseEntity.ok()
+            .cacheControl(CacheControl.maxAge(Duration.ofHours(6)).cachePublic())
+            .body(service.listAllStations())
 }

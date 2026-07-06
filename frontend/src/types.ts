@@ -33,6 +33,9 @@ export interface Trip {
   arrivalTime: string
   priceCents: number
   currency: string
+  // Signed browse-time price quote (JWS). Carried into add-leg so the backend snapshots the price it verifies
+  // locally — no synchronous Catalog call on the money path.
+  priceToken: string
 }
 
 // Spring Data `Page<T>` (only the fields the UI uses).

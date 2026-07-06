@@ -64,7 +64,7 @@ class CheckoutExpirySweeperTest {
     // A HELD booking with a reserved outbound leg (the user has not paid yet).
     private fun heldReserved(): UUID {
         val order = orderService.createDraft(buyer, "buyer@example.org", null).order
-        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1)
+        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip))
         saga.onReservationResult(order.id, trip, "RESERVED")
         return order.id
     }

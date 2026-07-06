@@ -16,6 +16,7 @@ const trip: Trip = {
   arrivalTime: '2026-06-29T11:41:00Z',
   priceCents: 14200,
   currency: 'EUR',
+  priceToken: 'test.price.token',
 }
 
 describe('TripCard', () => {

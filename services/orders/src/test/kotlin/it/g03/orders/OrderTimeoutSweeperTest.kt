@@ -62,7 +62,7 @@ class OrderTimeoutSweeperTest {
     // Drives a booking to PAYING (one reserved outbound leg, pay initiated).
     private fun payingOrder(): UUID {
         val order = orderService.createDraft(buyer, "buyer@example.org", null).order
-        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1)
+        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip))
         saga.onReservationResult(order.id, trip, "RESERVED")
         orderService.pay(order.id, buyer)
         return order.id
@@ -107,7 +107,7 @@ class OrderTimeoutSweeperTest {
     @Test
     fun `a HELD booking awaiting the user is NOT re-driven by the timeout sweeper`() {
         val order = orderService.createDraft(buyer, "buyer@example.org", null).order
-        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1) // HELD, awaiting the user's pay
+        orderService.addLeg(order.id, buyer, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip)) // HELD, awaiting the user's pay
         val reserveBefore = count(Topics.RESERVE_SEATS)
         age(order.id, secondsAgo = 600)
 

@@ -64,8 +64,12 @@ server:
   port: 8080
 
 app:
-  # Flat demo pricing: looking prices up in Catalog would add a sync dependency to the money path that the track's interaction shape does not call for
-  unit-price-cents: 1000
+  # Price-quote verification (see PricingConfig / PriceQuoteVerifier). The EC PUBLIC key (JWK JSON) matching
+  # Catalog's signing key is injected via PRICE_QUOTE_PUBLIC_KEY (a non-secret ConfigMap value); blank falls
+  # back to the baked DEV-ONLY public key. Orders verifies the browse-time quote locally — Catalog stays off
+  # the money path.
+  pricing:
+    verify-key: ${PRICE_QUOTE_PUBLIC_KEY:}
   # Human-gated checkout: the backend-owned hold window. Stamped on the first leg add; re-checked server-side at
   # pay and enforced by CheckoutExpirySweeper (never trust a client countdown). MUST be <= inventory.reservation.ttl
   # so a reserve-on-add hold is not reclaimed by the inventory reconciler before the user can pay.

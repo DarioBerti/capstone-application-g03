@@ -39,8 +39,9 @@ class OrderServiceImpl(
     private val legs: OrderLegRepository,
     private val outbox: Outbox,
     private val meterRegistry: MeterRegistry,
-    // Flat demo pricing snapshotted onto each leg at add-time (see root CLAUDE.md: no sync Catalog call on the money path)
-    @Value("\${app.unit-price-cents}") private val unitPriceCents: Long,
+    // Verifies the browse-time price quote the client carries into add-leg, so the leg is priced from a
+    // tamper-proof snapshot WITHOUT any synchronous Catalog call on the money path (see PriceQuoteVerifier)
+    private val priceQuoteVerifier: PriceQuoteVerifier,
     // Backend-owned checkout hold window: how long the user has to pay after the first leg is added
     @Value("\${app.checkout.window}") private val checkoutWindow: Duration,
 ) : OrderService {
@@ -67,8 +68,11 @@ class OrderServiceImpl(
     }
 
     @Transactional
-    override fun addLeg(orderId: UUID, buyerSub: String, direction: LegDirection, tripCode: String, qty: Int): OrderView {
+    override fun addLeg(orderId: UUID, buyerSub: String, direction: LegDirection, tripCode: String, qty: Int, priceToken: String): OrderView {
         require(qty > 0) { "qty must be positive" }
+        // Snapshot the price from the signed browse-time quote (pure local crypto — no remote call, no Catalog
+        // dependency on the money path). Verify binds the price to THIS trip and rejects a tampered/expired quote.
+        val unitPriceCents = priceQuoteVerifier.verify(tripCode, priceToken)
         val order = loadOwned(orderId, buyerSub)
         check(order.status == OrderStatus.DRAFT || order.status == OrderStatus.HELD) {
             "cannot add a leg to a ${order.status} order"
