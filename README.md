@@ -193,7 +193,7 @@ sequenceDiagram
     O-->>U: 201 {HELD, remainingSeconds}
 
     rect rgb(232,244,255)
-    Note over OB,I: ▼ the async outbox→CDC→Kafka hop — shown once; EVERY ⇒ below is this same path
+    Note over OB,I: ▼ the async outbox→CDC→Kafka hop — shown once · EVERY ⇒ below is this same path
     Z->>OB: read WAL (logical replication)
     Z->>K: publish reserve-seats
     K->>I: deliver to @KafkaListener
@@ -204,18 +204,18 @@ sequenceDiagram
     Note over O: TX — guard, leg→RESERVED, append order-status-changed
 
     U->>O: POST /{id}/pay
-    Note over O,OB: TX — re-check window; amount=Σ RESERVED legs; HELD→PAYING; append authorize-payment
+    Note over O,OB: TX — re-check window · amount=Σ RESERVED legs · HELD→PAYING · append authorize-payment
     O-->>U: 202 Accepted
     O->>P: authorize-payment ⇒
-    Note over P: TX — PaymentGateway.authorize (hold, no capture); UNIQUE(order_id); reply in payments outbox
+    Note over P: TX — PaymentGateway.authorize (hold, no capture) · UNIQUE(order_id) · reply in payments outbox
 
     alt AUTHORIZED
         P->>O: payment-result AUTHORIZED ⇒
-        Note over O: TX — order→AUTHORIZED; fan-out confirm-seats to EVERY reserved leg
+        Note over O: TX — order→AUTHORIZED · fan-out confirm-seats to EVERY reserved leg
         O->>I: confirm-seats (per leg) ⇒
         Note over I: TX — Reservation RESERVED→CONFIRMED (hold becomes a firm sale)
         I->>O: seats-confirmed CONFIRMED (+tripCode) ⇒
-        Note over O: TX — fan-in (load FOR UPDATE); when NO reserved leg remains ⇒ capture ONCE
+        Note over O: TX — fan-in (load FOR UPDATE) · when NO reserved leg remains ⇒ capture ONCE
         O->>P: capture-payment ⇒
         Note over P: TX — AUTHORIZED→CAPTURED (funds captured exactly once)
         P->>O: payment-captured ⇒
