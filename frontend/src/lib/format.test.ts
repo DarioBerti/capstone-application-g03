@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { formatCents, formatCountdown, formatDayMonth, formatDuration } from './format'
+import { addDays, describeDay, formatCents, formatCountdown, formatDayMonth, formatDuration } from './format'
 
 describe('formatCents', () => {
   test('renders cents as euro currency', () => {
@@ -25,6 +25,24 @@ describe('formatDayMonth', () => {
   // Noon UTC so no realistic dev/CI timezone shifts the calendar day.
   test('renders a compact day and month without the year', () => {
     expect(formatDayMonth('2026-07-15T12:00:00Z')).toBe('15 Jul')
+  })
+})
+
+describe('addDays', () => {
+  test('adds and subtracts days', () => {
+    expect(addDays('2026-07-06', 3)).toBe('2026-07-09')
+    expect(addDays('2026-07-06', -3)).toBe('2026-07-03')
+  })
+
+  test('rolls over month and year boundaries', () => {
+    expect(addDays('2026-07-30', 3)).toBe('2026-08-02')
+    expect(addDays('2026-12-31', 1)).toBe('2027-01-01')
+  })
+})
+
+describe('describeDay', () => {
+  test('splits a day into weekday, day-of-month and month', () => {
+    expect(describeDay('2026-07-06')).toEqual({ weekday: 'Mon', day: 6, month: 'Jul' })
   })
 })
 

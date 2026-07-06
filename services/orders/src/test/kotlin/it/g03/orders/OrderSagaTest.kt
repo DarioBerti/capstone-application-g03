@@ -10,6 +10,7 @@ import it.g03.orders.events.Topics
 import it.g03.orders.repository.OrderLegRepository
 import it.g03.orders.repository.OrderRepository
 import it.g03.orders.repository.OutboxEventRepository
+import it.g03.orders.service.BookingNotPayableException
 import it.g03.orders.service.OrderSaga
 import it.g03.orders.service.OrderService
 import org.junit.jupiter.api.BeforeEach
@@ -145,6 +146,28 @@ class OrderSagaTest {
         assertEquals(OrderStatus.HELD, statusOf(order.id), "a sold-out return is a one-way fallback, not a rejection")
     }
 
+    @Test
+    fun `outbound reserves on its reply, then adding a return leg reserves that leg too`() {
+        val order = draft()
+
+        addOutbound(order.id) // PENDING until Inventory confirms the hold
+        assertEquals(LegStatus.PENDING, legStatus(order.id, trip))
+        assertEquals(1, count(Topics.RESERVE_SEATS))
+
+        saga.onReservationResult(order.id, trip, "RESERVED") // the reservation-result unlocks Pay
+        assertEquals(LegStatus.RESERVED, legStatus(order.id, trip))
+
+        addReturn(order.id) // the buyer adds the return too -> a second PENDING leg + reserve-seats
+        assertEquals(LegStatus.PENDING, legStatus(order.id, tripReturn))
+        assertEquals(LegStatus.RESERVED, legStatus(order.id, trip), "the outbound stays reserved")
+        assertEquals(2, count(Topics.RESERVE_SEATS))
+
+        saga.onReservationResult(order.id, tripReturn, "RESERVED")
+        assertEquals(LegStatus.RESERVED, legStatus(order.id, trip))
+        assertEquals(LegStatus.RESERVED, legStatus(order.id, tripReturn))
+        assertEquals(OrderStatus.HELD, statusOf(order.id))
+    }
+
     // --- happy paths -------------------------------------------------------------------------------------------
 
     @Test
@@ -266,6 +289,46 @@ class OrderSagaTest {
         assertEquals(0, count(Topics.CAPTURE_PAYMENT), "never captured — not all legs were confirmed")
         assertEquals(1, count(Topics.RELEASE_SEATS), "the already-confirmed outbound leg is un-sold")
         assertEquals(LegStatus.RELEASED, legStatus(order.id, trip))
+    }
+
+    // --- oversell: caught at reserve; a confirm-time loss voids (there is no capture, so no refund) --------------
+
+    // The "9 orders on an 8-seat trip" story from the ops side: Inventory reserves only 8 (the 9th replies SOLD_OUT).
+    // That losing order can never pay — pay() requires a reserved outbound — so it never authorizes, captures, or
+    // refunds. Overselling is stopped at reservation, so it never reaches payment or confirmation at all.
+    @Test
+    fun `an order whose only leg sold out cannot pay - so it never authorizes, captures, or refunds`() {
+        val order = draft()
+        addOutbound(order.id)
+        saga.onReservationResult(order.id, trip, "SOLD_OUT") // the 9th customer: Inventory had no seat left
+
+        assertEquals(LegStatus.SOLD_OUT, legStatus(order.id, trip))
+        assertFailsWith<BookingNotPayableException> { orderService.pay(order.id, buyer) }
+
+        assertEquals(OrderStatus.HELD, statusOf(order.id), "pay was refused, not accepted — the order is untouched")
+        assertEquals(0, count(Topics.AUTHORIZE_PAYMENT), "no funds are ever authorized")
+        assertEquals(0, count(Topics.CAPTURE_PAYMENT), "nothing is captured, so there is nothing to refund")
+        assertEquals(0, count(Topics.CANCEL_AUTHORIZATION))
+    }
+
+    // Even when a seat IS lost after payment is authorized (the hold lapsed before confirm), the buyer is never
+    // charged and so never refunded: capture fires only once EVERY leg confirms. A leg EXPIRED at confirm rejects
+    // the booking and VOIDS the authorization (cancel-authorization) — capture never fires. Void, not refund.
+    @Test
+    fun `a leg lost at confirmation voids the authorization and never captures - the buyer is not charged, no refund`() {
+        val order = draft()
+        addOutbound(order.id)
+        saga.onReservationResult(order.id, trip, "RESERVED")
+        orderService.pay(order.id, buyer)
+        saga.onPaymentResult(order.id, "AUTHORIZED") // funds are HELD (authorized), not yet captured
+
+        saga.onSeatsConfirmed(order.id, trip, "EXPIRED") // the hold lapsed before confirm -> the seat is gone
+
+        assertEquals(OrderStatus.REJECTED, statusOf(order.id))
+        assertEquals(RejectionReason.RESERVATION_EXPIRED, rejectionOf(order.id))
+        assertEquals(1, count(Topics.CANCEL_AUTHORIZATION), "the funds hold is voided")
+        assertEquals(0, count(Topics.CAPTURE_PAYMENT), "capture never fires -> the buyer is never charged -> no refund")
+        assertEquals(LegStatus.EXPIRED, legStatus(order.id, trip))
     }
 
     // --- idempotency / out-of-order ----------------------------------------------------------------------------

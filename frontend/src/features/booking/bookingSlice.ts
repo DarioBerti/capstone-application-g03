@@ -34,8 +34,19 @@ const bookingSlice = createSlice({
     tripSelected(state, action: PayloadAction<string | null>) {
       state.selectedTripCode = action.payload
     },
+    // Rehydrate the whole booking intent from the persisted pointer after a refresh (order re-fetched from
+    // the backend, key + trip restored from localStorage) — atomic so it triggers a single re-persist.
+    bookingRestored(
+      state,
+      action: PayloadAction<{ order: Order; idempotencyKey: string | null; selectedTripCode: string | null }>,
+    ) {
+      state.order = action.payload.order
+      state.idempotencyKey = action.payload.idempotencyKey
+      state.selectedTripCode = action.payload.selectedTripCode
+    },
   },
 })
 
-export const { orderUpdated, orderCleared, idempotencyKeyMinted, tripSelected } = bookingSlice.actions
+export const { orderUpdated, orderCleared, idempotencyKeyMinted, tripSelected, bookingRestored } =
+  bookingSlice.actions
 export default bookingSlice.reducer

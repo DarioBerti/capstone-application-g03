@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import reducer, {
+  bookingRestored,
   idempotencyKeyMinted,
   orderCleared,
   orderUpdated,
@@ -41,6 +42,16 @@ describe('bookingSlice', () => {
 
   test('tripSelected tracks the current intent trip', () => {
     const state = reducer(undefined, tripSelected('FR9592-20260629'))
+    expect(state.selectedTripCode).toBe('FR9592-20260629')
+  })
+
+  test('bookingRestored rehydrates the order, key and trip together', () => {
+    const state = reducer(
+      undefined,
+      bookingRestored({ order: anOrder('HELD'), idempotencyKey: 'key-1', selectedTripCode: 'FR9592-20260629' }),
+    )
+    expect(state.order?.status).toBe('HELD')
+    expect(state.idempotencyKey).toBe('key-1')
     expect(state.selectedTripCode).toBe('FR9592-20260629')
   })
 })

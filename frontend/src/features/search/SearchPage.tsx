@@ -4,7 +4,6 @@ import Icon from '../../components/Icon'
 import { ErrorState, LoadingBlock, EmptyState } from '../../components/ui/QueryStates'
 import SortTabs, { type SortKey } from './SortTabs'
 import TripCard from './TripCard'
-import QuickFilters from './QuickFilters'
 import ReturnSearchBar from './ReturnSearchBar'
 import { filterByTimeOfDay, returnQueryFor, type TimeOfDay } from './returnSearch'
 import BookingSummary from '../booking/BookingSummary'
@@ -39,7 +38,6 @@ export default function SearchPage() {
   const pax = Math.max(1, Number(params.get('pax') ?? '1'))
 
   const [sort, setSort] = useState<SortKey>('cheapest')
-  const [maxPriceCents, setMaxPriceCents] = useState<number | undefined>(undefined)
 
   const { startBooking, addReturn, starting } = useBookingActions()
 
@@ -71,8 +69,8 @@ export default function SearchPage() {
   const resolvingReturn = awaitingReturn && !outboundTrip
   const query: TripQuery =
     awaitingReturn && outboundTrip
-      ? returnQueryFor(outboundTrip, { date: returnDate, maxPriceCents })
-      : { origin, destination, serviceDate, maxPriceCents }
+      ? returnQueryFor(outboundTrip, { date: returnDate })
+      : { origin, destination, serviceDate }
   const { data: page, isLoading, isError, error, refetch } = useListTripsQuery(query, { skip: resolvingReturn })
   const { data: availability = [] } = useListAvailabilityQuery()
 
@@ -127,10 +125,10 @@ export default function SearchPage() {
   const showLoading = isLoading || resolvingReturn
 
   return (
-    <main className="flex-grow max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop w-full py-xl">
-      <div className="mb-xl flex flex-col md:flex-row md:items-end justify-between gap-md">
+    <main className="flex-grow max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop w-full py-lg">
+      <div className="mb-lg flex flex-col md:flex-row md:items-end justify-between gap-md">
         <div>
-          <h1 className="font-display-lg text-display-lg-mobile text-on-background mb-xs">
+          <h1 className="font-display-lg text-display-lg-mobile md:text-display-lg text-on-background mb-xs">
             {awaitingReturn ? 'Pick your return' : 'Select your journey'}
           </h1>
           <div className="flex items-center gap-sm text-on-surface-variant">
@@ -142,11 +140,10 @@ export default function SearchPage() {
         <SortTabs value={sort} onChange={setSort} />
       </div>
 
-      <div className="grid grid-cols-12 gap-gutter">
+      <div className="grid grid-cols-12 gap-lg">
         <div className="col-span-12 lg:col-span-8 space-y-md">
           {awaitingReturn && outboundTrip && (
             <ReturnSearchBar
-              route={{ from: outboundTrip.destination.city, to: outboundTrip.origin.city }}
               date={returnDate ?? outboundTrip.serviceDate}
               onDate={setReturnDate}
               minDate={outboundTrip.serviceDate}
@@ -185,7 +182,6 @@ export default function SearchPage() {
         <aside className="col-span-12 lg:col-span-4">
           <div className="sticky top-24 space-y-md">
             <BookingSummary />
-            <QuickFilters maxPriceCents={maxPriceCents} onMaxPrice={setMaxPriceCents} />
           </div>
         </aside>
       </div>

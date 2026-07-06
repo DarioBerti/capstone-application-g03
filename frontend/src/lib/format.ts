@@ -18,6 +18,27 @@ export function formatDayMonth(iso: string): string {
   return new Date(iso).toLocaleDateString(LOCALE, { day: '2-digit', month: 'short' })
 }
 
+// Calendar-day math on plain 'YYYY-MM-DD' strings (no time/zone). Parse as a LOCAL date so a day never
+// shifts across a UTC boundary, then re-serialize — string ordering of the result stays chronological.
+export function addDays(isoDay: string, delta: number): string {
+  const [y, m, d] = isoDay.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + delta)
+  const mm = String(dt.getMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getDate()).padStart(2, '0')
+  return `${dt.getFullYear()}-${mm}-${dd}`
+}
+
+// The parts a day-strip cell renders for a 'YYYY-MM-DD' day, e.g. { weekday: 'Fri', day: 3, month: 'Jul' }.
+export function describeDay(isoDay: string): { weekday: string; day: number; month: string } {
+  const [y, m, d] = isoDay.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  return {
+    weekday: dt.toLocaleDateString(LOCALE, { weekday: 'short' }),
+    day: dt.getDate(),
+    month: dt.toLocaleDateString(LOCALE, { month: 'short' }),
+  }
+}
+
 // Human duration between two ISO instants, e.g. "3h 19m".
 export function formatDuration(departIso: string, arriveIso: string): string {
   const mins = Math.max(0, Math.round((new Date(arriveIso).getTime() - new Date(departIso).getTime()) / 60000))

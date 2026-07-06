@@ -39,8 +39,8 @@ class InventoryConcurrencyTest {
     // Injects the reservation repository so the test can prepare and clean the database state directly
     @Autowired lateinit var reservations: ReservationRepository
 
-    // Thread pool that lets several reserve calls truly run at the same time
-    private val pool = Executors.newFixedThreadPool(8)
+    // Thread pool that lets several reserve calls truly run at the same time; sized for the largest race here (9)
+    private val pool = Executors.newFixedThreadPool(9)
 
     @BeforeEach  // runs before each test method to start from a known database state
     fun cleanSlate() {
@@ -81,6 +81,38 @@ class InventoryConcurrencyTest {
         assertEquals(0, items.findById("FR9999-20260629").orElseThrow().available)
         assertTrue(
             items.findById("FR9999-20260629").orElseThrow().available >= 0,
+            "never oversell: availability can never go negative",
+        )
+    }
+
+    // Verifies never-oversell at scale: 9 customers race for 8 seats -> EXACTLY 8 win and the 9th is told sold-out.
+    // This is the reservation-time gate that makes the "9 orders all pay, last one refunded at confirmation" story
+    // impossible: only 8 orders ever hold a seat, so only 8 can reach payment — no oversell survives to confirm.
+    @Test
+    fun `nine customers racing for eight seats leave exactly one sold out`() {
+        items.save(TripSeats(tripCode = "FR9592-20260629", totalSeats = 8, available = 8))
+        val start = CountDownLatch(1)
+
+        val futures = (1..9).map { i ->
+            pool.submit(
+                Callable {
+                    start.await()
+                    runCatching { service.reserve("order-$i", "FR9592-20260629", 1) }
+                },
+            )
+        }
+        start.countDown()
+        val results = futures.map { it.get() }
+
+        val outcomes = results.mapNotNull { it.getOrNull() }
+        val winners = outcomes.count { it.reservation.status == ReservationStatus.RESERVED }
+        val soldOut = outcomes.count { it.reservation.status == ReservationStatus.REJECTED }
+
+        assertEquals(8, winners, "exactly the eight available seats may be reserved")
+        assertEquals(1, soldOut, "the ninth customer must be told sold-out")
+        assertEquals(0, items.findById("FR9592-20260629").orElseThrow().available)
+        assertTrue(
+            items.findById("FR9592-20260629").orElseThrow().available >= 0,
             "never oversell: availability can never go negative",
         )
     }

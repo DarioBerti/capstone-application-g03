@@ -4,13 +4,15 @@ import Spinner from '../../components/ui/Spinner'
 import HoldWindowCountdown from './HoldWindowCountdown'
 import { useBookingActions } from './useBookingActions'
 import { useAppSelector } from '../../app/hooks'
-import { formatCents } from '../../lib/format'
+import { useGetTripQuery } from '../catalog/catalogApi'
+import { formatCents, formatDate, formatTime } from '../../lib/format'
 import type { OrderLeg } from '../../types'
 
 const ACTIVE_LEG = new Set(['PENDING', 'RESERVED', 'CONFIRMED'])
 
-// Sidebar summary of the active booking (the reserved legs, total, hold-window countdown) with the
-// Proceed-to-Checkout action. Renders nothing until a booking is started.
+// Sidebar cart for the active booking: one card per reserved leg (plus a pending-return placeholder while the
+// booking is still one-way), the total, and the Proceed-to-Checkout action. Renders nothing until a booking
+// is started.
 export default function BookingSummary() {
   const navigate = useNavigate()
   const order = useAppSelector((s) => s.booking.order)
@@ -20,7 +22,7 @@ export default function BookingSummary() {
     return (
       <div className="bg-surface-container-highest rounded-xl p-lg shadow-lg border border-primary/10 text-center">
         <Icon name="shopping_basket" className="text-3xl text-primary mb-sm" />
-        <h2 className="font-title-lg text-title-lg text-on-background mb-xs">Your Summary</h2>
+        <h2 className="font-title-lg text-title-lg text-on-background mb-xs">Your Cart</h2>
         <p className="font-body-sm text-body-sm text-on-surface-variant">
           Select a journey to hold your seats and start a booking.
         </p>
@@ -29,42 +31,31 @@ export default function BookingSummary() {
   }
 
   const activeLegs = order.legs.filter((l) => ACTIVE_LEG.has(l.status))
-  const hasOutbound = activeLegs.some((l) => l.direction === 'OUTBOUND')
   const hasReturn = activeLegs.some((l) => l.direction === 'RETURN')
+  const outboundCode = activeLegs.find((l) => l.direction === 'OUTBOUND')?.tripCode
 
   return (
     <div className="bg-surface-container-highest rounded-xl p-lg shadow-lg border border-primary/10">
       <div className="flex justify-between items-center mb-lg">
-        <h2 className="font-title-lg text-title-lg text-on-background">Your Summary</h2>
+        <h2 className="font-title-lg text-title-lg text-on-background">Your Cart</h2>
         <Icon name="shopping_basket" className="text-primary" />
       </div>
 
       <div className="space-y-md pb-lg border-b border-outline-variant/30">
         {activeLegs.map((leg) => (
-          <LegRow key={leg.legId} leg={leg} onRemove={() => dropLeg(order.orderId, leg.legId)} removing={removing} />
+          <LegCard
+            key={leg.legId}
+            leg={leg}
+            currency={order.currency}
+            onRemove={() => dropLeg(order.orderId, leg.legId)}
+            removing={removing}
+          />
         ))}
-        {activeLegs.length === 0 && (
-          <p className="font-body-sm text-body-sm text-on-surface-variant">No active legs.</p>
-        )}
-        {hasOutbound && !hasReturn && (
-          <p className="flex items-start gap-xs font-body-sm text-body-sm text-on-surface-variant">
-            <Icon name="swap_horiz" className="text-primary text-sm" />
-            One-way so far — pick a return trip from the results for a round trip.
-          </p>
-        )}
+        {activeLegs.length === 0 && <p className="font-body-sm text-body-sm text-on-surface-variant">No active legs.</p>}
+        {outboundCode && !hasReturn && <PendingReturnCard outboundCode={outboundCode} />}
       </div>
 
-      <div className="py-lg space-y-sm">
-        <div className="flex justify-between items-center">
-          <span className="font-body-md text-body-md text-on-surface-variant">Ticket total</span>
-          <span className="font-label-tabular text-label-tabular tabular-nums">
-            {formatCents(order.amountCents, order.currency)}
-          </span>
-        </div>
-        <div className="flex justify-between items-center">
-          <span className="font-body-md text-body-md text-on-surface-variant">Booking fee</span>
-          <span className="font-label-tabular text-label-tabular tabular-nums">{formatCents(0, order.currency)}</span>
-        </div>
+      <div className="py-lg">
         <div className="flex justify-between items-center pt-md">
           <span className="font-headline-md text-headline-md text-on-background">Total price</span>
           <span className="font-display-lg text-title-lg tabular-nums text-primary font-extrabold">
@@ -86,25 +77,65 @@ export default function BookingSummary() {
   )
 }
 
-function LegRow({ leg, onRemove, removing }: { leg: OrderLeg; onRemove: () => void; removing: boolean }) {
+// A reserved leg: the human route + departure resolved from its trip code (public + cached), the line price,
+// and a Remove action. Applies to the outbound and the return alike.
+function LegCard({
+  leg,
+  currency,
+  onRemove,
+  removing,
+}: {
+  leg: OrderLeg
+  currency: string
+  onRemove: () => void
+  removing: boolean
+}) {
+  const { data: trip } = useGetTripQuery(leg.tripCode)
+  const route = trip ? `${trip.origin.city} – ${trip.destination.city}` : leg.tripCode
+  const when = trip ? `${formatDate(trip.departureTime)} · ${formatTime(trip.departureTime)}` : null
+
   return (
-    <div className="flex justify-between items-start">
-      <div>
-        <p className="font-label-tabular text-label-tabular">
-          {leg.direction === 'OUTBOUND' ? 'Outbound journey' : 'Return journey'}
-        </p>
-        <p className="font-body-sm text-body-sm text-on-surface-variant">
-          {leg.tripCode} · {leg.qty} {leg.qty > 1 ? 'passengers' : 'passenger'} · {leg.status}
-        </p>
+    <div className="relative bg-surface-container-lowest rounded-lg shadow-sm overflow-hidden border border-outline-variant/30">
+      <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-primary" />
+      <div className="pl-lg pr-md py-md">
+        <div className="flex justify-between items-start mb-xs">
+          <span className="font-label-caps text-label-caps uppercase text-on-surface-variant">{leg.direction}</span>
+          <span className="text-primary font-bold text-lg tabular-nums">{formatCents(leg.lineAmountCents, currency)}</span>
+        </div>
+        <h3 className="font-body-md text-body-md font-bold text-on-surface leading-tight mb-xs">{route}</h3>
+        {when && <p className="font-body-sm text-body-sm text-on-surface-variant">{when}</p>}
+        <div className="flex justify-end mt-sm">
+          <button
+            onClick={onRemove}
+            disabled={removing}
+            className="text-primary hover:underline font-label-caps text-xs disabled:opacity-50"
+            aria-label={`Remove ${leg.direction.toLowerCase()} leg`}
+          >
+            {removing ? <Spinner className="text-sm" /> : 'Remove'}
+          </button>
+        </div>
       </div>
-      <button
-        onClick={onRemove}
-        disabled={removing}
-        className="text-on-surface-variant hover:text-error font-label-caps text-label-caps disabled:opacity-50"
-        aria-label={`Remove ${leg.direction.toLowerCase()} leg`}
-      >
-        {removing ? <Spinner className="text-sm" /> : 'Remove'}
-      </button>
+    </div>
+  )
+}
+
+// Placeholder shown while the booking is still one-way: the reverse route (derived from the outbound trip) as
+// a greyed slot nudging the traveller to add a return. Checkout is still available for a one-way booking.
+function PendingReturnCard({ outboundCode }: { outboundCode: string }) {
+  const { data: outbound } = useGetTripQuery(outboundCode)
+  const route = outbound ? `${outbound.destination.city} – ${outbound.origin.city}` : 'Return trip'
+
+  return (
+    <div className="relative bg-surface-container-lowest rounded-lg shadow-sm overflow-hidden border border-outline-variant/30">
+      <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-outline-variant" />
+      <div className="pl-lg pr-md py-md">
+        <div className="flex justify-between items-start mb-xs">
+          <span className="font-label-caps text-label-caps uppercase text-on-surface-variant">RETURN</span>
+          <span className="text-error font-bold text-sm">To complete</span>
+        </div>
+        <h3 className="font-body-md text-body-md font-bold text-on-surface-variant leading-tight mb-xs">{route}</h3>
+        <p className="font-body-sm text-body-sm text-on-surface-variant/60 italic">Select a train</p>
+      </div>
     </div>
   )
 }
