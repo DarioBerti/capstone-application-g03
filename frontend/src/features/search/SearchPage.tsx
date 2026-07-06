@@ -4,6 +4,7 @@ import Icon from '../../components/Icon'
 import { ErrorState, LoadingBlock, EmptyState } from '../../components/ui/QueryStates'
 import SortTabs, { type SortKey } from './SortTabs'
 import TripCard from './TripCard'
+import DateStrip from './DateStrip'
 import ReturnSearchBar from './ReturnSearchBar'
 import { filterByTimeOfDay, returnQueryFor, type TimeOfDay } from './returnSearch'
 import BookingSummary from '../booking/BookingSummary'
@@ -11,6 +12,7 @@ import { useBookingActions } from '../booking/useBookingActions'
 import { useAppSelector } from '../../app/hooks'
 import { useGetTripQuery, useListAllStationsQuery, useListTripsQuery, type TripQuery } from '../catalog/catalogApi'
 import { useListAvailabilityQuery } from '../inventory/inventoryApi'
+import { todayIso } from '../../lib/format'
 import type { Availability, Trip } from '../../types'
 
 const ACTIVE_LEG = new Set(['PENDING', 'RESERVED', 'CONFIRMED'])
@@ -27,11 +29,18 @@ function sortTrips(trips: Trip[], key: SortKey): Trip[] {
 }
 
 export default function SearchPage() {
-  const [params] = useSearchParams()
+  const [params, setSearchParams] = useSearchParams()
   const origin = params.get('origin') ?? undefined
   const destination = params.get('destination') ?? undefined
   const serviceDate = params.get('serviceDate') ?? undefined
   const pax = Math.max(1, Number(params.get('pax') ?? '1'))
+
+  // The outbound date lives in the URL (shareable, refresh-safe); the strip rewrites just that param.
+  const onServiceDate = (day: string) => {
+    const next = new URLSearchParams(params)
+    next.set('serviceDate', day)
+    setSearchParams(next)
+  }
 
   const [sort, setSort] = useState<SortKey>('cheapest')
 
@@ -122,12 +131,12 @@ export default function SearchPage() {
       <div className="mb-lg flex flex-col md:flex-row md:items-end justify-between gap-md">
         <div>
           <h1 className="font-display-lg text-display-lg-mobile md:text-display-lg text-on-background mb-xs">
-            {awaitingReturn ? 'Pick your return' : 'Select your journey'}
+            {awaitingReturn ? 'Pick your return' : 'Pick your outbound'}
           </h1>
-          <div className="flex items-center gap-sm text-on-surface-variant">
-            <span className="font-title-lg text-title-lg">{from ?? 'Anywhere'}</span>
-            <Icon name="trending_flat" className="text-primary" />
-            <span className="font-title-lg text-title-lg">{to ?? 'Anywhere'}</span>
+          <div className="flex items-center gap-sm">
+            <span className="font-title-lg text-title-lg text-primary">{from ?? 'Anywhere'}</span>
+            <Icon name="arrow_forward" className="text-outline" />
+            <span className="font-title-lg text-title-lg text-primary">{to ?? 'Anywhere'}</span>
           </div>
         </div>
         <SortTabs value={sort} onChange={setSort} />
@@ -135,11 +144,20 @@ export default function SearchPage() {
 
       <div className="grid grid-cols-12 gap-lg">
         <div className="col-span-12 lg:col-span-8 space-y-md">
+          {!awaitingReturn && serviceDate && (
+            <DateStrip
+              value={serviceDate}
+              onChange={onServiceDate}
+              minDate={todayIso()}
+              priceQuery={{ origin, destination }}
+            />
+          )}
           {awaitingReturn && outboundTrip && (
             <ReturnSearchBar
               date={returnDate ?? outboundTrip.serviceDate}
               onDate={setReturnDate}
               minDate={outboundTrip.serviceDate}
+              priceQuery={{ origin: outboundTrip.destination.code, destination: outboundTrip.origin.code }}
               timeOfDay={timeOfDay}
               onTimeOfDay={setTimeOfDay}
             />

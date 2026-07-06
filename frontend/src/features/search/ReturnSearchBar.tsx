@@ -1,4 +1,4 @@
-import DateStrip from './DateStrip'
+import DateStrip, { type DayPriceQuery } from './DateStrip'
 import type { TimeOfDay } from './returnSearch'
 
 const TIMES: { key: TimeOfDay; label: string }[] = [
@@ -14,18 +14,20 @@ export default function ReturnSearchBar({
   date,
   onDate,
   minDate,
+  priceQuery,
   timeOfDay,
   onTimeOfDay,
 }: {
   date: string
   onDate: (d: string) => void
   minDate: string
+  priceQuery?: DayPriceQuery
   timeOfDay: TimeOfDay
   onTimeOfDay: (t: TimeOfDay) => void
 }) {
   return (
     <div className="space-y-md">
-      <DateStrip value={date} onChange={onDate} minDate={minDate} />
+      <DateStrip value={date} onChange={onDate} minDate={minDate} priceQuery={priceQuery} />
       <div className="flex items-center justify-end gap-sm">
         <span className="font-label-caps text-label-caps text-on-surface-variant">DEPARTURE</span>
         <div className="flex gap-xs bg-surface-container p-xs rounded-lg" role="group" aria-label="Return time of day">

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { addDays, describeDay, formatCents, formatCountdown, formatDayMonth, formatDuration } from './format'
+import { addDays, describeDay, formatCents, formatCountdown, formatDayMonth, formatDuration, todayIso } from './format'
 
 describe('formatCents', () => {
   test('renders cents as euro currency', () => {
@@ -37,6 +37,17 @@ describe('addDays', () => {
   test('rolls over month and year boundaries', () => {
     expect(addDays('2026-07-30', 3)).toBe('2026-08-02')
     expect(addDays('2026-12-31', 1)).toBe('2027-01-01')
+  })
+})
+
+describe('todayIso', () => {
+  test('renders the local calendar day as YYYY-MM-DD', () => {
+    // Arrange
+    const now = new Date()
+    const expected = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+    // Act + Assert
+    expect(todayIso()).toBe(expected)
   })
 })
 

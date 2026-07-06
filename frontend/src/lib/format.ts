@@ -18,14 +18,22 @@ export function formatDayMonth(iso: string): string {
   return new Date(iso).toLocaleDateString(LOCALE, { day: '2-digit', month: 'short' })
 }
 
+function toIsoDay(dt: Date): string {
+  const mm = String(dt.getMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getDate()).padStart(2, '0')
+  return `${dt.getFullYear()}-${mm}-${dd}`
+}
+
 // Calendar-day math on plain 'YYYY-MM-DD' strings (no time/zone). Parse as a LOCAL date so a day never
 // shifts across a UTC boundary, then re-serialize — string ordering of the result stays chronological.
 export function addDays(isoDay: string, delta: number): string {
   const [y, m, d] = isoDay.split('-').map(Number)
-  const dt = new Date(y, m - 1, d + delta)
-  const mm = String(dt.getMonth() + 1).padStart(2, '0')
-  const dd = String(dt.getDate()).padStart(2, '0')
-  return `${dt.getFullYear()}-${mm}-${dd}`
+  return toIsoDay(new Date(y, m - 1, d + delta))
+}
+
+// The user's local calendar day as 'YYYY-MM-DD' (comparable/composable with addDays).
+export function todayIso(): string {
+  return toIsoDay(new Date())
 }
 
 // The parts a day-strip cell renders for a 'YYYY-MM-DD' day, e.g. { weekday: 'Fri', day: 3, month: 'Jul' }.

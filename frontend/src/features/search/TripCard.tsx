@@ -1,8 +1,7 @@
 import Icon from '../../components/Icon'
 import Badge from '../../components/ui/Badge'
 import Spinner from '../../components/ui/Spinner'
-import StationLine from './StationLine'
-import { formatCents, formatDayMonth, formatDuration } from '../../lib/format'
+import { formatCents, formatDayMonth, formatDuration, formatTime } from '../../lib/format'
 import type { Availability, Trip } from '../../types'
 
 const LOW_SEAT_THRESHOLD = 10
@@ -29,48 +28,63 @@ export default function TripCard({
   const disabled = soldOut || actionDisabled || selecting
 
   return (
-    <div className="group bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-sm hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary transform origin-left scale-y-0 group-hover:scale-y-100 transition-transform" />
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-xl">
-        <div className="flex-grow grid grid-cols-1 md:grid-cols-3 items-center gap-lg">
-          <div className="flex items-center gap-md">
-            <div className="w-12 h-12 bg-surface-container flex items-center justify-center rounded-lg shrink-0">
-              <Icon name="train" filled className="text-primary" />
+    <div className="group bg-surface rounded-xl shadow-sm border border-outline-variant p-md hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-lg">
+        <div className="flex items-start gap-xl flex-1">
+          <div className="flex flex-col">
+            <span className="font-headline-md text-headline-md text-on-surface tabular-nums">
+              {formatTime(trip.departureTime)}
+            </span>
+            <span className="font-headline-md text-headline-md text-on-surface-variant tabular-nums mt-md">
+              {formatTime(trip.arrivalTime)}
+            </span>
+          </div>
+
+          <div className="flex flex-col flex-1 relative min-w-[200px]">
+            <div className="flex items-center gap-md mb-md">
+              <div className="w-3 h-3 rounded-full bg-primary z-10 relative" />
+              <span className="font-label-tabular text-label-tabular text-on-surface">{trip.origin.name}</span>
             </div>
-            <div>
-              <p className="font-label-caps text-label-caps text-primary uppercase">{trip.carrierCode}</p>
-              <p className="font-body-sm text-body-sm text-on-surface-variant">{trip.serviceNumber}</p>
+            <div className="absolute left-1.5 top-3 bottom-5 w-px bg-outline-variant" />
+            <div className="flex items-center gap-md mt-xs">
+              <div className="w-3 h-3 rounded-full bg-on-background z-10 relative" />
+              <span className="font-label-tabular text-label-tabular text-on-surface">{trip.destination.name}</span>
             </div>
           </div>
-          <div className="md:col-span-2">
-            <StationLine
-              departTime={trip.departureTime}
-              departPlace={trip.origin.city}
-              arriveTime={trip.arrivalTime}
-              arrivePlace={trip.destination.city}
-              duration={formatDuration(trip.departureTime, trip.arrivalTime)}
-              date={formatDayMonth(trip.departureTime)}
-            />
+
+          <div className="flex flex-col items-start gap-sm">
+            <span className="font-body-sm text-body-sm text-on-surface-variant whitespace-nowrap">
+              {formatDayMonth(trip.departureTime)} · {formatDuration(trip.departureTime, trip.arrivalTime)}
+            </span>
+            {/* Fixed label: the domain has no connection model, every trip is a single direct service. */}
+            <div className="flex items-center gap-xs text-primary bg-primary-container/10 px-sm py-xs rounded">
+              <Icon name="train" className="text-[16px]" />
+              <span className="font-label-caps text-label-caps">DIRECT</span>
+            </div>
+            <span className="font-body-sm text-body-sm text-outline whitespace-nowrap">
+              {trip.carrierCode} · {trip.serviceNumber}
+            </span>
+            {plenty && (
+              <span className="flex items-center gap-xs font-body-sm text-body-sm text-on-surface-variant whitespace-nowrap">
+                <Icon name="event_seat" className="text-sm" />
+                <span className="tabular-nums">{availability!.available} seats available</span>
+              </span>
+            )}
+            {low && <Badge tone="warning">Only {availability!.available} left</Badge>}
           </div>
         </div>
-        <div className="flex md:flex-col items-end justify-between md:justify-center border-t md:border-t-0 md:border-l border-outline-variant pt-md md:pt-0 md:pl-xl gap-sm min-w-[140px]">
-          <div className="text-right">
-            <p className="font-label-caps text-label-caps text-on-surface-variant">From</p>
-            <p className="font-display-lg text-title-lg tabular-nums text-on-background font-extrabold">
+
+        <div className="flex flex-row md:flex-col items-center md:items-end justify-between w-full md:w-auto mt-md md:mt-0 pt-md md:pt-0 border-t md:border-t-0 border-outline-variant gap-md">
+          <div className="flex flex-col items-end">
+            <span className="font-body-sm text-body-sm text-on-surface-variant">from</span>
+            <span className="font-headline-md text-headline-md text-on-surface tabular-nums">
               {formatCents(trip.priceCents, trip.currency)}
-            </p>
+            </span>
           </div>
-          {plenty && (
-            <p className="flex items-center gap-xs font-body-sm text-body-sm text-on-surface-variant">
-              <Icon name="event_seat" className="text-sm" />
-              <span className="tabular-nums">{availability!.available} seats available</span>
-            </p>
-          )}
-          {low && <Badge tone="warning">Only {availability!.available} left</Badge>}
           <button
             onClick={() => onAction(trip)}
             disabled={disabled}
-            className="mt-xs w-full md:w-auto px-lg py-sm bg-primary text-on-primary rounded-lg font-bold hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-xs"
+            className="bg-surface-variant text-primary border border-primary font-label-tabular text-label-tabular px-lg py-sm rounded-lg group-hover:enabled:bg-primary group-hover:enabled:text-on-primary transition-colors disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-xs"
           >
             {selecting ? <Spinner /> : soldOut ? 'Sold out' : actionLabel}
           </button>

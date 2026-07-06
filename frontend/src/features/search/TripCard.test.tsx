@@ -21,17 +21,17 @@ const trip: Trip = {
 }
 
 describe('TripCard', () => {
-  test('shows the price, carrier and cities', () => {
+  test('shows the price, carrier and stations', () => {
     render(<TripCard trip={trip} onAction={() => {}} actionLabel="Select" />)
     expect(screen.getByText(/142\.00/)).toBeInTheDocument()
-    expect(screen.getByText('Eurostar')).toBeInTheDocument()
-    expect(screen.getByText('Paris')).toBeInTheDocument()
-    expect(screen.getByText('Amsterdam')).toBeInTheDocument()
+    expect(screen.getByText(/Eurostar/)).toBeInTheDocument()
+    expect(screen.getByText('Paris Gare du Nord')).toBeInTheDocument()
+    expect(screen.getByText('Amsterdam Centraal')).toBeInTheDocument()
   })
 
   test('shows the departure date for the trip', () => {
     render(<TripCard trip={trip} onAction={() => {}} actionLabel="Select" />)
-    expect(screen.getByText(formatDayMonth(trip.departureTime))).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(formatDayMonth(trip.departureTime)))).toBeInTheDocument()
   })
 
   test('calls onAction with the trip when the action is clicked', async () => {
