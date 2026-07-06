@@ -2,7 +2,7 @@ import Icon from '../../components/Icon'
 import Badge from '../../components/ui/Badge'
 import Spinner from '../../components/ui/Spinner'
 import StationLine from './StationLine'
-import { formatCents, formatDuration } from '../../lib/format'
+import { formatCents, formatDayMonth, formatDuration } from '../../lib/format'
 import type { Availability, Trip } from '../../types'
 
 const LOW_SEAT_THRESHOLD = 10
@@ -50,6 +50,7 @@ export default function TripCard({
               arriveTime={trip.arrivalTime}
               arrivePlace={trip.destination.city}
               duration={formatDuration(trip.departureTime, trip.arrivalTime)}
+              date={formatDayMonth(trip.departureTime)}
             />
           </div>
         </div>
