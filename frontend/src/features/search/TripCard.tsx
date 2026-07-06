@@ -14,7 +14,6 @@ export default function TripCard({
   actionLabel,
   actionDisabled,
   selecting,
-  badge,
 }: {
   trip: Trip
   availability?: Availability
@@ -23,10 +22,10 @@ export default function TripCard({
   actionLabel: string
   actionDisabled?: boolean
   selecting?: boolean
-  badge?: { label: string; tone: 'accent' | 'tertiary' }
 }) {
   const soldOut = availability != null && availability.available <= 0
   const low = availability != null && availability.available > 0 && availability.available <= LOW_SEAT_THRESHOLD
+  const plenty = availability != null && availability.available > LOW_SEAT_THRESHOLD
   const disabled = soldOut || actionDisabled || selecting
 
   return (
@@ -61,7 +60,12 @@ export default function TripCard({
               {formatCents(trip.priceCents, trip.currency)}
             </p>
           </div>
-          {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
+          {plenty && (
+            <p className="flex items-center gap-xs font-body-sm text-body-sm text-on-surface-variant">
+              <Icon name="event_seat" className="text-sm" />
+              <span className="tabular-nums">{availability!.available} seats available</span>
+            </p>
+          )}
           {low && <Badge tone="warning">Only {availability!.available} left</Badge>}
           <button
             onClick={() => onAction(trip)}

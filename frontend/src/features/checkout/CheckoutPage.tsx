@@ -80,7 +80,7 @@ export default function CheckoutPage() {
         </section>
         <aside className="col-span-12 md:col-span-3">
           <div className="sticky top-24 flex flex-col gap-lg">
-            <HoldWindowCard remainingSeconds={order.remainingSeconds} />
+            <HoldWindowCard expiresAt={order.expiresAt} remainingSeconds={order.remainingSeconds} />
             <TripSummary order={order} />
           </div>
         </aside>

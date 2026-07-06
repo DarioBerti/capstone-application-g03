@@ -19,15 +19,11 @@ function durationMs(t: Trip) {
   return new Date(t.arrivalTime).getTime() - new Date(t.departureTime).getTime()
 }
 
-// Client-side sort over the current page (the "Fastest"/"Best" keys aren't sortable DB columns).
+// Client-side sort over the current page (the "Fastest" key isn't a sortable DB column).
 function sortTrips(trips: Trip[], key: SortKey): Trip[] {
   const copy = [...trips]
   if (key === 'cheapest') return copy.sort((a, b) => a.priceCents - b.priceCents)
-  if (key === 'fastest') return copy.sort((a, b) => durationMs(a) - durationMs(b))
-  // "Best" = a light blend of price and speed (both normalized), a reasonable default.
-  const maxP = Math.max(...copy.map((t) => t.priceCents), 1)
-  const maxD = Math.max(...copy.map(durationMs), 1)
-  return copy.sort((a, b) => a.priceCents / maxP + durationMs(a) / maxD - (b.priceCents / maxP + durationMs(b) / maxD))
+  return copy.sort((a, b) => durationMs(a) - durationMs(b))
 }
 
 export default function SearchPage() {
@@ -108,9 +104,6 @@ export default function SearchPage() {
     () => (awaitingReturn ? filterByTimeOfDay(sorted, timeOfDay) : sorted),
     [sorted, awaitingReturn, timeOfDay],
   )
-  const cheapest = trips.length ? Math.min(...trips.map((t) => t.priceCents)) : undefined
-  const fastest = trips.length ? Math.min(...trips.map(durationMs)) : undefined
-
   // The URL params carry station CODES; resolve them to display names off the cached station list
   // (falling back to the raw code only for the brief first load).
   const { data: allStations = [] } = useListAllStationsQuery()
@@ -167,13 +160,6 @@ export default function SearchPage() {
                 actionLabel={action.label}
                 actionDisabled={action.disabled}
                 selecting={starting && pendingTrip === trip.code}
-                badge={
-                  trip.priceCents === cheapest
-                    ? { label: 'Cheapest', tone: 'tertiary' }
-                    : durationMs(trip) === fastest
-                      ? { label: 'Fastest', tone: 'accent' }
-                      : undefined
-                }
               />
             )
           })}

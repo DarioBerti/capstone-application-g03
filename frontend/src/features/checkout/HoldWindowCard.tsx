@@ -2,10 +2,16 @@ import Icon from '../../components/Icon'
 import { formatCountdown } from '../../lib/format'
 import { useCountdown } from '../booking/useCountdown'
 
-// Prominent hold-window countdown on the checkout page. Server-seeded via `remainingSeconds` (display-only;
+// Prominent hold-window countdown on the checkout page. Server-seeded (display-only;
 // the backend enforces the real window and rejects with EXPIRED_NO_PAYMENT at zero).
-export default function HoldWindowCard({ remainingSeconds }: { remainingSeconds: number | null | undefined }) {
-  const seconds = useCountdown(remainingSeconds)
+export default function HoldWindowCard({
+  expiresAt,
+  remainingSeconds,
+}: {
+  expiresAt: string | null | undefined
+  remainingSeconds: number | null | undefined
+}) {
+  const seconds = useCountdown(expiresAt, remainingSeconds)
   const urgent = seconds != null && seconds <= 60
   return (
     <div className="bg-inverse-surface text-inverse-on-surface p-lg rounded-xl shadow-lg border border-primary/20">

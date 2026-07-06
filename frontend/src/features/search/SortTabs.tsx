@@ -1,9 +1,8 @@
-export type SortKey = 'cheapest' | 'fastest' | 'best'
+export type SortKey = 'cheapest' | 'fastest'
 
 const TABS: { key: SortKey; label: string }[] = [
   { key: 'cheapest', label: 'Cheapest' },
   { key: 'fastest', label: 'Fastest' },
-  { key: 'best', label: 'Best' },
 ]
 
 export default function SortTabs({ value, onChange }: { value: SortKey; onChange: (k: SortKey) => void }) {

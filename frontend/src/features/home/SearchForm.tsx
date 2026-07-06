@@ -80,7 +80,7 @@ export default function SearchForm() {
             id="departure"
             value={date}
             onChange={setDate}
-            placeholder="dd/mm/aaaa"
+            placeholder="dd/mm/yyyy"
             disablePast
             className={inputClass}
           />

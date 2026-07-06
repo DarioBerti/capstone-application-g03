@@ -33,10 +33,6 @@ export default function Header() {
         <div className="flex items-center gap-md">
           <ThemeToggle />
           <CartIndicator />
-          <div className="hidden lg:flex items-center gap-xs text-on-surface-variant">
-            <Icon name="language" />
-            <span className="font-body-sm text-body-sm">ENG</span>
-          </div>
           {authed ? (
             <div className="flex items-center gap-sm">
               <Link

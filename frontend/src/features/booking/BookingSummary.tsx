@@ -6,17 +6,21 @@ import { useBookingActions } from './useBookingActions'
 import { useAppSelector } from '../../app/hooks'
 import { useGetTripQuery } from '../catalog/catalogApi'
 import { formatCents, formatDate, formatTime } from '../../lib/format'
-import type { OrderLeg } from '../../types'
+import type { OrderLeg, OrderStatus } from '../../types'
 
 const ACTIVE_LEG = new Set(['PENDING', 'RESERVED', 'CONFIRMED'])
+// The cart only represents a booking the user can still act on. Once payment starts, the slice keeps the
+// order snapshot for the checkout view, but it must never resurface here as a re-checkoutable cart.
+const CART_STATUS = new Set<OrderStatus>(['DRAFT', 'HELD'])
 
 // Sidebar cart for the active booking: one card per reserved leg (plus a pending-return placeholder while the
-// booking is still one-way), the total, and the Proceed-to-Checkout action. Renders nothing until a booking
-// is started.
+// booking is still one-way), the total, and the Proceed-to-Checkout action. Renders the empty state until a
+// booking is started (or after the active one leaves the cart-able statuses).
 export default function BookingSummary() {
   const navigate = useNavigate()
-  const order = useAppSelector((s) => s.booking.order)
+  const sliceOrder = useAppSelector((s) => s.booking.order)
   const { dropLeg, removing } = useBookingActions()
+  const order = sliceOrder && CART_STATUS.has(sliceOrder.status) ? sliceOrder : null
 
   if (!order) {
     return (
@@ -72,7 +76,7 @@ export default function BookingSummary() {
         <Icon name="arrow_forward" />
       </button>
 
-      <HoldWindowCountdown remainingSeconds={order.remainingSeconds} />
+      <HoldWindowCountdown expiresAt={order.expiresAt} remainingSeconds={order.remainingSeconds} />
     </div>
   )
 }

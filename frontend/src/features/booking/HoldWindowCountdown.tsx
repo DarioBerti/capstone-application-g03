@@ -4,8 +4,14 @@ import { useCountdown } from './useCountdown'
 
 // Compact inline countdown used in the summary sidebar. Server-seeded (display-only). Turns danger when the
 // hold window drops under a minute.
-export default function HoldWindowCountdown({ remainingSeconds }: { remainingSeconds: number | null | undefined }) {
-  const seconds = useCountdown(remainingSeconds)
+export default function HoldWindowCountdown({
+  expiresAt,
+  remainingSeconds,
+}: {
+  expiresAt: string | null | undefined
+  remainingSeconds: number | null | undefined
+}) {
+  const seconds = useCountdown(expiresAt, remainingSeconds)
   if (seconds == null) return null
   const urgent = seconds <= 60
   return (

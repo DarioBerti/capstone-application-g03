@@ -55,6 +55,13 @@ describe('TripCard', () => {
     expect(screen.getByRole('button', { name: /add return/i })).toBeInTheDocument()
   })
 
+  test('shows the seat count when plenty of seats remain', () => {
+    render(
+      <TripCard trip={trip} onAction={() => {}} actionLabel="Select" availability={{ tripCode: trip.code, available: 87, totalSeats: 100 }} />,
+    )
+    expect(screen.getByText(/87 seats available/i)).toBeInTheDocument()
+  })
+
   test('disables the action and shows a low-seat badge appropriately', () => {
     const { rerender } = render(
       <TripCard trip={trip} onAction={() => {}} actionLabel="Select" availability={{ tripCode: trip.code, available: 0, totalSeats: 100 }} />,
