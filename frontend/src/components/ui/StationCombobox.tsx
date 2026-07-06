@@ -6,6 +6,10 @@ import type { Station } from '../../types'
 const OPTION_LIMIT = 50
 const FIELD_FONT_PX = 20 // matches the shared `text-title-lg` role
 
+// Sentinel for the unconstrained search: code '' means "no station filter" and is what the catalog
+// trip search expects when a side is left open (browse-all).
+export const ANYWHERE: Station = { code: '', name: 'Anywhere', city: 'All stations', country: '' }
+
 // Rank a match: prefix hits (name → city → code) before substring hits, so "mil" surfaces "Milano…" first.
 function scoreOf(s: Station, term: string): number {
   const name = s.name.toLowerCase()
@@ -40,6 +44,7 @@ export default function StationCombobox({
   stations,
   value,
   onChange,
+  anywhereOption = false,
 }: {
   id: string
   label: string
@@ -48,8 +53,12 @@ export default function StationCombobox({
   stations: Station[]
   value: string
   onChange: (code: string) => void
+  anywhereOption?: boolean
 }) {
-  const selected = useMemo(() => stations.find((s) => s.code === value) ?? null, [stations, value])
+  const selected = useMemo(
+    () => (anywhereOption && value === '' ? ANYWHERE : (stations.find((s) => s.code === value) ?? null)),
+    [stations, value, anywhereOption],
+  )
   const [query, setQuery] = useState(selected?.name ?? '')
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
@@ -60,7 +69,18 @@ export default function StationCombobox({
     setQuery(selected?.name ?? '')
   }, [selected])
 
-  const results = useMemo(() => filterStations(stations, query), [stations, query])
+  const results = useMemo(() => {
+    if (!anywhereOption) return filterStations(stations, query)
+    const term = query.trim().toLowerCase()
+    // An untouched query (empty, or still mirroring the current selection) means the user is browsing:
+    // lead with "Anywhere" over the full list. Typing towards "Anywhere" keeps it; any other term is a
+    // plain station search.
+    const browsing = !term || term === selected?.name.toLowerCase()
+    if (browsing || ANYWHERE.name.toLowerCase().startsWith(term)) {
+      return [ANYWHERE, ...filterStations(stations, browsing ? '' : query).slice(0, OPTION_LIMIT - 1)]
+    }
+    return filterStations(stations, query)
+  }, [stations, query, anywhereOption, selected])
   useEffect(() => setActiveIndex(0), [query])
 
   const { ref: inputRef, fontPx } = useAutoFitFont<HTMLInputElement>(query || placeholder, FIELD_FONT_PX)
@@ -156,7 +176,7 @@ export default function StationCombobox({
                 >
                   <span className="block font-body-md text-body-md text-on-surface truncate">{s.name}</span>
                   <span className="block font-body-sm text-body-sm text-on-surface-variant truncate">
-                    {s.city}, {s.country}
+                    {s.country ? `${s.city}, ${s.country}` : s.city}
                   </span>
                 </button>
               </li>

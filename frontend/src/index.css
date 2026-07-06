@@ -3,6 +3,117 @@
 @tailwind utilities;
 
 @layer base {
+  /* EuroTransit Signature palette as RGB triplets consumed by tailwind.config.js via
+     rgb(var(--color-*) / <alpha-value>). Light values below are the original Stitch export;
+     the .dark block is the Material-3-style dark mapping of the same roles (teal brand,
+     AA-contrast pairs). *-fixed roles are theme-invariant per the M3 spec. */
+  :root {
+    --color-surface-tint: 0 106 97;
+    --color-surface-container-lowest: 255 255 255;
+    --color-primary-fixed: 137 245 231;
+    --color-tertiary-container: 163 103 0;
+    --color-surface: 248 249 255;
+    --color-inverse-on-surface: 234 241 255;
+    --color-inverse-primary: 107 216 203;
+    --color-on-tertiary: 255 255 255;
+    --color-on-primary-container: 244 255 252;
+    --color-secondary-fixed: 218 226 253;
+    --color-on-surface-variant: 61 73 71;
+    --color-outline: 109 122 119;
+    --color-on-secondary-fixed-variant: 63 70 92;
+    --color-on-secondary: 255 255 255;
+    --color-secondary: 86 94 116;
+    --color-surface-variant: 211 228 254;
+    --color-on-secondary-fixed: 19 27 46;
+    --color-on-primary-fixed: 0 32 29;
+    --color-inverse-surface: 33 49 69;
+    --color-background: 248 249 255;
+    --color-surface-container: 229 238 255;
+    --color-primary: 0 104 95;
+    --color-on-primary-fixed-variant: 0 80 73;
+    --color-secondary-container: 218 226 253;
+    --color-primary-fixed-dim: 107 216 203;
+    --color-on-tertiary-container: 255 251 255;
+    --color-surface-dim: 203 219 245;
+    --color-primary-container: 0 131 120;
+    --color-surface-container-highest: 211 228 254;
+    --color-on-tertiary-fixed: 42 23 0;
+    --color-on-background: 11 28 48;
+    --color-secondary-fixed-dim: 190 198 224;
+    --color-on-secondary-container: 92 100 122;
+    --color-tertiary: 130 81 0;
+    --color-on-tertiary-fixed-variant: 101 62 0;
+    --color-on-error: 255 255 255;
+    --color-tertiary-fixed-dim: 255 185 95;
+    --color-outline-variant: 188 201 198;
+    --color-on-error-container: 147 0 10;
+    --color-on-primary: 255 255 255;
+    --color-surface-container-low: 239 244 255;
+    --color-surface-container-high: 220 233 255;
+    --color-error: 186 26 26;
+    --color-on-surface: 11 28 48;
+    --color-tertiary-fixed: 255 221 184;
+    --color-error-container: 255 218 214;
+    --color-surface-bright: 248 249 255;
+    --color-accent: 245 158 11;
+    --color-success: 0 104 95;
+    --color-warning: 163 103 0;
+    --color-danger: 186 26 26;
+    --glass-bg: 255 255 255;
+    --gradient-cta-from: 0 104 95;
+    --gradient-cta-to: 0 131 120;
+  }
+
+  .dark,
+  :root[data-theme='dark'] {
+    --color-surface-tint: 107 216 203;
+    --color-surface-container-lowest: 8 16 32;
+    --color-tertiary-container: 101 62 0;
+    --color-surface: 13 21 35;
+    --color-inverse-on-surface: 234 241 255;
+    --color-inverse-primary: 0 104 95;
+    --color-on-tertiary: 69 43 0;
+    --color-on-primary-container: 137 245 231;
+    --color-on-surface-variant: 188 201 198;
+    --color-outline: 134 147 143;
+    --color-on-secondary: 40 48 72;
+    --color-secondary: 190 198 224;
+    --color-surface-variant: 61 70 83;
+    /* Deliberate M3 deviation: inverse-surface stays a premium navy so the Footer and Hero
+       fallback read as dark panels in BOTH themes. */
+    --color-inverse-surface: 27 38 55;
+    --color-background: 13 21 35;
+    --color-surface-container: 23 33 51;
+    --color-primary: 107 216 203;
+    --color-secondary-container: 63 70 92;
+    --color-on-tertiary-container: 255 221 184;
+    --color-surface-dim: 13 21 35;
+    --color-primary-container: 0 80 73;
+    --color-surface-container-highest: 44 55 74;
+    --color-on-background: 224 231 245;
+    --color-on-secondary-container: 218 226 253;
+    --color-tertiary: 255 185 95;
+    --color-on-error: 105 0 5;
+    --color-outline-variant: 61 73 71;
+    --color-on-error-container: 255 218 214;
+    --color-on-primary: 0 55 49;
+    --color-surface-container-low: 19 28 43;
+    --color-surface-container-high: 33 44 62;
+    --color-error: 255 180 171;
+    --color-on-surface: 224 231 245;
+    --color-error-container: 147 0 10;
+    --color-surface-bright: 51 62 80;
+    --color-accent: 251 191 36;
+    --color-success: 107 216 203;
+    --color-warning: 255 185 95;
+    --color-danger: 255 180 171;
+    --glass-bg: 23 33 51;
+    --gradient-cta-from: 107 216 203;
+    --gradient-cta-to: 38 166 154;
+
+    color-scheme: dark;
+  }
+
   html {
     scroll-behavior: smooth;
   }
@@ -21,16 +132,12 @@
 
 /* Stitch helper classes lifted out of the per-page inline <style> blocks. */
 .glass-effect {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgb(var(--glass-bg) / 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
-:root[data-theme='dark'] .glass-effect,
-.dark .glass-effect {
-  background: rgba(33, 49, 69, 0.85);
-}
 .motion-gradient {
-  background: linear-gradient(90deg, #00685f 0%, #008378 100%);
+  background: linear-gradient(90deg, rgb(var(--gradient-cta-from)) 0%, rgb(var(--gradient-cta-to)) 100%);
 }
 .station-line {
   position: relative;
@@ -52,7 +159,7 @@
 }
 
 .shimmer {
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  background: linear-gradient(90deg, transparent, rgb(var(--color-on-surface) / 0.15), transparent);
   background-size: 200% 100%;
   animation: shimmer 2s infinite;
 }
@@ -74,11 +181,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #bcc9c6;
+  background: rgb(var(--color-outline-variant));
   border-radius: 10px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #00685f;
+  background: rgb(var(--color-primary));
 }
 
 /* Native date inputs draw their own calendar button on the right, which collides with our custom

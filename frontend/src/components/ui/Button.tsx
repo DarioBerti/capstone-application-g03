@@ -9,9 +9,9 @@ const base =
 
 const variants: Record<Variant, string> = {
   // "Motion" teal gradient (search / primary journeys).
-  primary: 'motion-gradient text-white hover:brightness-110 shadow-lg',
-  // Warm-orange CTA (checkout / pay) — pierces the cool palette.
-  accent: 'bg-accent text-on-background hover:brightness-110 shadow-md',
+  primary: 'motion-gradient text-on-primary hover:brightness-110 shadow-lg',
+  // Warm-orange CTA (checkout / pay) — pierces the cool palette; amber needs dark text in both themes.
+  accent: 'bg-accent text-on-tertiary-fixed hover:brightness-110 shadow-md',
   secondary: 'border border-primary text-primary hover:bg-primary/5',
   ghost: 'text-on-surface-variant hover:text-primary hover:bg-surface-container',
 }

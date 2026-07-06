@@ -167,7 +167,7 @@ export default function DatePicker({
               }
               if (c.iso === value) {
                 return (
-                  <div key={c.iso} className="py-sm bg-primary text-white rounded-full font-bold shadow-md">
+                  <div key={c.iso} className="py-sm bg-primary text-on-primary rounded-full font-bold shadow-md">
                     {c.day}
                   </div>
                 )

@@ -1,5 +1,5 @@
 import { apiSlice } from '../../api/apiSlice'
-import type { Page, Station, Trip } from '../../types'
+import type { DestinationSummary, Page, Station, Trip } from '../../types'
 
 // Filters for the trip list (mirror the catalog TripFilter). All optional: an empty query lists everything.
 export interface TripQuery {
@@ -40,7 +40,17 @@ export const catalogApi = apiSlice.injectEndpoints({
       query: () => ({ url: '/catalog/stations/all' }),
       keepUnusedDataFor: 86400,
     }),
+    // Aggregated "popular destinations" (cheapest future fare + departure count per destination); backs the
+    // home Explore grid. Mirrors the endpoint's own 10-minute public HTTP cache window.
+    listTopDestinations: build.query<DestinationSummary[], { origin?: string; limit?: number } | void>({
+      query: (q) => ({
+        url: '/catalog/destinations/top',
+        params: { ...(q?.origin && { origin: q.origin }), limit: q?.limit ?? 6 },
+      }),
+      providesTags: ['Trip'],
+      keepUnusedDataFor: 600,
+    }),
   }),
 })
 
-export const { useListTripsQuery, useGetTripQuery, useListAllStationsQuery } = catalogApi
+export const { useListTripsQuery, useGetTripQuery, useListAllStationsQuery, useListTopDestinationsQuery } = catalogApi
