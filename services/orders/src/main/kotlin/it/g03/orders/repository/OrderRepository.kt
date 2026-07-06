@@ -6,6 +6,7 @@ import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor
 import org.springframework.data.jpa.repository.Lock
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import java.time.Instant
 import java.util.UUID
@@ -32,4 +33,14 @@ interface OrderRepository : JpaRepository<Order, UUID>, JpaSpecificationExecutor
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from Order o where o.id = :id")
     fun findByIdForUpdate(id: UUID): Order?
+
+    /**
+     * Housekeeping ([AbandonedDraftSweeper]): hard-delete DRAFT bookings whose last activity predates the cutoff
+     * (abandoned empty carts — no seats held, no money). Delete their legs FIRST via
+     * [OrderLegRepository.deleteByOrderStatusAndUpdatedAtBefore] (the order_legs FK has no ON DELETE CASCADE); the
+     * `orders` table is outside the Debezium publication, so removing rows emits no CDC. Returns the rows deleted.
+     */
+    @Modifying
+    @Query("delete from Order o where o.status = :status and o.updatedAt < :cutoff")
+    fun deleteByStatusAndUpdatedAtBefore(status: OrderStatus, cutoff: Instant): Int
 }

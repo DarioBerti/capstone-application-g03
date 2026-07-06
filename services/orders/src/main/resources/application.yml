@@ -93,6 +93,15 @@ app:
     # restart + group rebalance + Spring Boot startup, ~60-90s on a small cluster); too tight and the sweeper
     # re-drives merely-slow steps, amplifying an outage into duplicate (idempotent) commands.
     deadline: PT2M
+  # Housekeeping sweep (AbandonedDraftSweeper): hard-deletes DRAFT bookings idle past max-age — abandoned empty
+  # carts that never became a booking (no seats held, no money, outside the Debezium publication, so removing them
+  # emits nothing). Reclaims storage, not correctness. poll-interval is kept far below max-age on purpose:
+  # @Scheduled fixedDelay resets its clock at startup, so a multi-day interval could otherwise never fire on a
+  # cluster that redeploys often. Tests set enabled=false and drive the sweep directly.
+  draft-sweeper:
+    enabled: true
+    poll-interval: PT6H
+    max-age: P3D
 
 management:
   # Fase 4: emit http.server.requests histogram buckets so p99 (RED/SLO), exemplar->trace, and the

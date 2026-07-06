@@ -186,6 +186,20 @@ class OrderStateMachine(
         }
     }
 
+    /**
+     * Housekeeping counterpart to the saga transitions (driven by [AbandonedDraftSweeper]): hard-delete DRAFT
+     * bookings whose last activity predates [cutoff]. A DRAFT is an abandoned empty cart — it holds no seats
+     * (add-leg moves a booking to HELD; a re-emptied draft already released its legs) and no money, so there is
+     * nothing to compensate and no terminal event to emit. Legs go first because the order_legs FK has no
+     * ON DELETE CASCADE; both tables are outside the Debezium publication, so the deletes emit no CDC. One
+     * transaction, so a partial delete can never orphan a leg. Returns the number of orders removed.
+     */
+    @Transactional
+    fun discardAbandonedDrafts(cutoff: Instant): Int {
+        legs.deleteByOrderStatusAndUpdatedAtBefore(OrderStatus.DRAFT, cutoff)
+        return orders.deleteByStatusAndUpdatedAtBefore(OrderStatus.DRAFT, cutoff)
+    }
+
     // Terminal rejection: give back every still-held leg (release-seats), optionally cancel the payment
     // authorization, then flip the order to REJECTED and emit order-rejected + the notification. Called with the
     // order already loaded inside a guarded transition's transaction.
