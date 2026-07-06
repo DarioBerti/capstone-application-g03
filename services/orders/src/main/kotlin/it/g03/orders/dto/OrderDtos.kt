@@ -55,6 +55,7 @@ data class OrderResponse(
     val expiresAt: Instant?,
     val remainingSeconds: Long?,
     val paymentInitiatedAt: Instant?,
+    val createdAt: Instant,
 )
 
 fun OrderLeg.toResponse() = OrderLegResponse(
@@ -70,6 +71,7 @@ fun OrderView.toResponse(now: Instant = Instant.now()): OrderResponse {
         orderId = order.id, status = order.status, rejectionReason = order.rejectionReason,
         currency = order.currency, amountCents = total, legs = legs.map { it.toResponse() },
         expiresAt = order.expiresAt, remainingSeconds = remaining, paymentInitiatedAt = order.paymentInitiatedAt,
+        createdAt = order.createdAt,
     )
 }
 

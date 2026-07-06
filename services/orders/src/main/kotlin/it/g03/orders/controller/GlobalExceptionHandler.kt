@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 
 /**
  * Centralizes domain-exception → HTTP mapping for every controller in this service, so controllers
@@ -47,6 +48,13 @@ class GlobalExceptionHandler(
         ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
             ErrorResponse(e.bindingResult.fieldErrors.joinToString(", ") { "${it.field}: ${it.defaultMessage}" }),
         )
+
+    // A query param that can't be bound to its target type (an unknown OrderStatus in ?status=, or a malformed
+    // ISO date in ?createdFrom/?createdTo) → 400 with the typed error body instead of Spring's default response.
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun typeMismatch(e: MethodArgumentTypeMismatchException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST)
+            .body(ErrorResponse("invalid value for query parameter '${e.name}': ${e.value}"))
 
     // The add-leg price quote is invalid (malformed / tampered / expired / wrong trip) → 400 bad input.
     @ExceptionHandler(BadPriceQuoteException::class)

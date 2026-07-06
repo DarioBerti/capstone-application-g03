@@ -4,11 +4,14 @@ import io.github.resilience4j.ratelimiter.annotation.RateLimiter
 import it.g03.orders.dto.AddLegRequest
 import it.g03.orders.dto.OrderResponse
 import it.g03.orders.dto.toResponse
+import it.g03.orders.entities.OrderStatus
 import it.g03.orders.service.OrderService
 import jakarta.validation.Valid
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
+import org.springframework.data.domain.Sort
 import org.springframework.data.web.PageableDefault
+import org.springframework.format.annotation.DateTimeFormat
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -20,7 +23,10 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.UUID
 
 /**
@@ -76,12 +82,24 @@ class OrdersController(
     ): ResponseEntity<OrderResponse> =
         ResponseEntity.status(HttpStatus.ACCEPTED).body(service.pay(orderId, buyerSub(jwt)).toResponse())
 
-    // GET /api/orders -> the authenticated buyer's bookings (my-bookings), paginated.
+    // GET /api/orders -> the authenticated buyer's bookings (my-bookings), paginated. Optional filters: `status`
+    // (CSV of OrderStatus) and a `createdFrom`/`createdTo` (ISO LocalDate) range resolved to inclusive UTC day
+    // bounds. Default order is newest-first; an explicit client `sort` param overrides it.
     @GetMapping
     fun list(
         @AuthenticationPrincipal jwt: Jwt,
-        @PageableDefault(size = 20) pageable: Pageable,
-    ): Page<OrderResponse> = service.listForBuyer(buyerSub(jwt), pageable).map { it.toResponse() }
+        @RequestParam(required = false) status: Set<OrderStatus>?,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) createdFrom: LocalDate?,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) createdTo: LocalDate?,
+        @PageableDefault(size = 20, sort = ["createdAt"], direction = Sort.Direction.DESC) pageable: Pageable,
+    ): Page<OrderResponse> =
+        service.listForBuyer(
+            buyerSub(jwt),
+            status,
+            createdFrom?.atStartOfDay(ZoneOffset.UTC)?.toInstant(),
+            createdTo?.plusDays(1)?.atStartOfDay(ZoneOffset.UTC)?.toInstant(),
+            pageable,
+        ).map { it.toResponse() }
 
     // GET /api/orders/{orderId} -> the booking with its legs, hold window, and terminal state (buyer-scoped).
     @GetMapping("/{orderId}")

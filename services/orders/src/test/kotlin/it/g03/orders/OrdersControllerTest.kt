@@ -1,5 +1,6 @@
 package it.g03.orders
 
+import it.g03.orders.entities.Order
 import it.g03.orders.entities.OrderStatus
 import it.g03.orders.repository.OrderLegRepository
 import it.g03.orders.repository.OrderRepository
@@ -17,6 +18,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.time.Instant
 import kotlin.test.assertEquals
 
 /**
@@ -52,6 +54,11 @@ class OrdersControllerTest {
     }
 
     private fun draftId() = orderService.createDraft(sub, "buyer@example.org", null).order.id
+
+    // Persist a booking directly (bypassing the saga) so a read-side test can pin its status and createdAt —
+    // createdAt is a plain settable column, so distinct timestamps make the default sort deterministic.
+    private fun persist(status: OrderStatus, createdAt: Instant = Instant.now(), buyer: String = sub): Order =
+        orders.save(Order(buyerSub = buyer, buyerEmail = "buyer@example.org", status = status, createdAt = createdAt))
 
     // Verifies the entry is locked: an unauthenticated POST is rejected with 401, never creating a booking.
     @Test
@@ -163,6 +170,77 @@ class OrdersControllerTest {
     @Test
     fun `GET my orders without a token is rejected with 401`() {
         mockMvc.perform(get("/api/orders")).andExpect(status().isUnauthorized)
+    }
+
+    // The optional status filter narrows my-bookings to the requested status only.
+    @Test
+    fun `GET my orders filters by status`() {
+        persist(OrderStatus.CONFIRMED)
+        persist(OrderStatus.HELD)
+        persist(OrderStatus.REJECTED)
+
+        mockMvc.perform(get("/api/orders?status=CONFIRMED").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].status").value("CONFIRMED"))
+    }
+
+    // A CSV of statuses is an OR over the set (?status=HELD,PAYING returns bookings in either state).
+    @Test
+    fun `GET my orders accepts a CSV of statuses`() {
+        persist(OrderStatus.HELD)
+        persist(OrderStatus.PAYING)
+        persist(OrderStatus.CONFIRMED)
+
+        mockMvc.perform(get("/api/orders?status=HELD,PAYING").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalElements").value(2))
+    }
+
+    // An unknown status value can't bind to OrderStatus → 400 with the service's typed ErrorResponse body
+    // (a populated `error`), not Spring's default empty error response.
+    @Test
+    fun `GET my orders with an invalid status is rejected with a 400 typed error`() {
+        mockMvc.perform(get("/api/orders?status=NOT_A_STATUS").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").exists())
+    }
+
+    // With no explicit sort the default is createdAt DESC (newest booking first).
+    @Test
+    fun `GET my orders returns newest first by default`() {
+        val older = persist(OrderStatus.CONFIRMED, Instant.parse("2026-06-01T10:00:00Z"))
+        val newer = persist(OrderStatus.CONFIRMED, Instant.parse("2026-06-02T10:00:00Z"))
+
+        mockMvc.perform(get("/api/orders").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.content[0].orderId").value(newer.id.toString()))
+            .andExpect(jsonPath("$.content[1].orderId").value(older.id.toString()))
+    }
+
+    // createdFrom/createdTo resolve to inclusive UTC day bounds: a same-day range keeps only that day's bookings.
+    @Test
+    fun `GET my orders filters by created date range`() {
+        persist(OrderStatus.CONFIRMED, Instant.parse("2026-06-01T12:00:00Z"))
+        val inRange = persist(OrderStatus.CONFIRMED, Instant.parse("2026-06-02T12:00:00Z"))
+        persist(OrderStatus.CONFIRMED, Instant.parse("2026-06-03T12:00:00Z"))
+
+        mockMvc.perform(
+            get("/api/orders?createdFrom=2026-06-02&createdTo=2026-06-02").with(jwt().jwt { it.subject(sub) }),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.content[0].orderId").value(inRange.id.toString()))
+    }
+
+    // The response exposes the booking's createdAt.
+    @Test
+    fun `GET my orders exposes createdAt in the response`() {
+        persist(OrderStatus.CONFIRMED, Instant.parse("2026-06-02T12:00:00Z"))
+
+        mockMvc.perform(get("/api/orders").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.content[0].createdAt").exists())
     }
 
     // Verifies idempotency at the HTTP edge: a retried create with the same Idempotency-Key yields ONE booking.

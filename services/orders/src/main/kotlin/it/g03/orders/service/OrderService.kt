@@ -3,8 +3,10 @@ package it.g03.orders.service
 import it.g03.orders.entities.LegDirection
 import it.g03.orders.entities.Order
 import it.g03.orders.entities.OrderLeg
+import it.g03.orders.entities.OrderStatus
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
+import java.time.Instant
 import java.util.UUID
 
 /** An order together with its legs — the unit the controller maps to the API response (order + outbound/return). */
@@ -35,6 +37,17 @@ interface OrderService {
     /** Read side: the order plus its legs. Buyer-scoped — a foreign order reads as not-found (no existence leak). */
     fun get(orderId: UUID, buyerSub: String): OrderView
 
-    /** "My bookings": the authenticated buyer's orders, paginated (scoped on buyer_sub). */
-    fun listForBuyer(buyerSub: String, pageable: Pageable): Page<OrderView>
+    /**
+     * "My bookings": the authenticated buyer's orders, paginated (always scoped on buyer_sub). Optional
+     * filters narrow — never widen — the buyer's own set: [statuses] (null/empty = every status) and the
+     * inclusive-lower/exclusive-upper createdAt bounds [createdFrom]/[createdTo] (already resolved to UTC
+     * instants at the edge).
+     */
+    fun listForBuyer(
+        buyerSub: String,
+        statuses: Set<OrderStatus>?,
+        createdFrom: Instant?,
+        createdTo: Instant?,
+        pageable: Pageable,
+    ): Page<OrderView>
 }

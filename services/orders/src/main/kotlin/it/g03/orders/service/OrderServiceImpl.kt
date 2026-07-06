@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
+import org.springframework.data.jpa.domain.Specification
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
@@ -167,8 +168,14 @@ class OrderServiceImpl(
     override fun get(orderId: UUID, buyerSub: String): OrderView = view(loadOwned(orderId, buyerSub))
 
     @Transactional(readOnly = true)
-    override fun listForBuyer(buyerSub: String, pageable: Pageable): Page<OrderView> {
-        val page = orders.findByBuyerSub(buyerSub, pageable)
+    override fun listForBuyer(
+        buyerSub: String,
+        statuses: Set<OrderStatus>?,
+        createdFrom: Instant?,
+        createdTo: Instant?,
+        pageable: Pageable,
+    ): Page<OrderView> {
+        val page = orders.findAll(listSpec(buyerSub, statuses, createdFrom, createdTo), pageable)
         // Batch-load every page order's legs in one query, then pair them up — avoids an N+1 over the page.
         val legsByOrder = legs.findByOrderIdIn(page.content.map { it.id }).groupBy { it.orderId }
         return page.map { OrderView(it, legsByOrder[it.id] ?: emptyList()) }
@@ -203,3 +210,29 @@ class OrderServiceImpl(
         val ACTIVE_LEG = setOf(LegStatus.PENDING, LegStatus.RESERVED, LegStatus.CONFIRMED)
     }
 }
+
+// Composable my-bookings filter. buyer_sub equality is ALWAYS AND-ed (security): a status/date filter can only
+// narrow a buyer's own bookings, never widen visibility to another buyer's. A null/empty clause adds no predicate.
+private fun listSpec(buyerSub: String, statuses: Set<OrderStatus>?, createdFrom: Instant?, createdTo: Instant?): Specification<Order> =
+    Specification.allOf(
+        listOfNotNull(
+            ownedBy(buyerSub),
+            statuses?.takeIf { it.isNotEmpty() }?.let { statusIn(it) },
+            createdFrom?.let { createdAtFrom(it) },
+            createdTo?.let { createdAtBefore(it) },
+        ),
+    )
+
+private fun ownedBy(buyerSub: String): Specification<Order> =
+    Specification { root, _, cb -> cb.equal(root.get<String>("buyerSub"), buyerSub) }
+
+private fun statusIn(statuses: Set<OrderStatus>): Specification<Order> =
+    Specification { root, _, cb -> root.get<OrderStatus>("status").`in`(statuses) }
+
+// createdFrom is the inclusive lower bound; createdTo is the exclusive upper bound (the next-day UTC start
+// resolved at the edge), so a whole-day range reads as [from 00:00, to+1 00:00).
+private fun createdAtFrom(from: Instant): Specification<Order> =
+    Specification { root, _, cb -> cb.greaterThanOrEqualTo(root.get<Instant>("createdAt"), from) }
+
+private fun createdAtBefore(to: Instant): Specification<Order> =
+    Specification { root, _, cb -> cb.lessThan(root.get<Instant>("createdAt"), to) }
