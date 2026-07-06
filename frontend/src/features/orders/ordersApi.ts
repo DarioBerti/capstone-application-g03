@@ -1,5 +1,5 @@
 import { apiSlice } from '../../api/apiSlice'
-import type { LegDirection, Order, Page } from '../../types'
+import type { LegDirection, Order, OrderStatus, Page } from '../../types'
 
 export interface AddLegArgs {
   orderId: string
@@ -11,16 +11,35 @@ export interface AddLegArgs {
   priceToken: string
 }
 
+// Filters for the buyer-scoped order list. `status` binds to the backend's CSV Set<OrderStatus> param;
+// dates are ISO days resolved to inclusive bounds server-side. All optional (absent = current behavior).
+export interface ListOrdersArgs {
+  page?: number
+  size?: number
+  status?: OrderStatus | OrderStatus[]
+  createdFrom?: string
+  createdTo?: string
+}
+
 export const ordersApi = apiSlice.injectEndpoints({
   endpoints: (build) => ({
     getOrder: build.query<Order, string>({
       query: (orderId) => ({ url: `/orders/${orderId}` }),
       providesTags: (_r, _e, orderId) => [{ type: 'Order', id: orderId }],
     }),
-    // "My bookings" (backend #1: GET /api/orders buyer-scoped) — may not be wired yet; the UI handles the
-    // error/empty path.
-    listMyOrders: build.query<Page<Order>, { page?: number; size?: number } | void>({
-      query: (p) => ({ url: '/orders', params: { page: p?.page ?? 0, size: p?.size ?? 20 } }),
+    // "My bookings" (GET /api/orders, buyer-scoped). Pre-rollout backends ignore the extra params and
+    // return every status — callers that depend on the filter also guard client-side.
+    listMyOrders: build.query<Page<Order>, ListOrdersArgs | void>({
+      query: (p) => ({
+        url: '/orders',
+        params: {
+          page: p?.page ?? 0,
+          size: p?.size ?? 20,
+          ...(p?.status?.length && { status: Array.isArray(p.status) ? p.status.join(',') : p.status }),
+          ...(p?.createdFrom && { createdFrom: p.createdFrom }),
+          ...(p?.createdTo && { createdTo: p.createdTo }),
+        },
+      }),
       providesTags: ['Order'],
     }),
     // Create an empty DRAFT. The client-minted Idempotency-Key rides in the header (NOT the body) so a

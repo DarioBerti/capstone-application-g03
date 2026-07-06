@@ -3,8 +3,8 @@ import type { ReactNode } from 'react'
 type Tone = 'primary' | 'tertiary' | 'accent' | 'success' | 'warning' | 'danger' | 'neutral'
 
 const tones: Record<Tone, string> = {
-  primary: 'bg-primary text-white',
-  tertiary: 'bg-tertiary-container text-white',
+  primary: 'bg-primary text-on-primary',
+  tertiary: 'bg-tertiary-container text-on-tertiary-container',
   accent: 'bg-accent/15 text-tertiary',
   success: 'bg-primary/10 text-primary',
   warning: 'bg-tertiary/10 text-tertiary',

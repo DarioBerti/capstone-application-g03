@@ -4,7 +4,7 @@ import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { apiSlice } from '../../api/apiSlice'
 import { catalogApi } from './catalogApi'
-import type { Page, Station, Trip } from '../../types'
+import type { DestinationSummary, Page, Station, Trip } from '../../types'
 
 const station = (code: string, city: string): Station => ({ code, name: `${city} Central`, city, country: 'XX' })
 const tripPage: Page<Trip> = {
@@ -30,10 +30,18 @@ const tripPage: Page<Trip> = {
   size: 20,
 }
 const allStations: Station[] = [station('PAR', 'Paris'), station('AMS', 'Amsterdam')]
+const topDestinations: DestinationSummary[] = [
+  { code: 'AMS', name: 'Amsterdam Central', city: 'Amsterdam', country: 'XX', fromPriceCents: 4550, currency: 'EUR', tripCount: 12 },
+]
 
+let lastDestinationsUrl: URL | null = null
 const server = setupServer(
   http.get('*/api/catalog/trips', () => HttpResponse.json(tripPage)),
   http.get('*/api/catalog/stations/all', () => HttpResponse.json(allStations)),
+  http.get('*/api/catalog/destinations/top', ({ request }) => {
+    lastDestinationsUrl = new URL(request.url)
+    return HttpResponse.json(topDestinations)
+  }),
 )
 
 const makeStore = () =>
@@ -58,5 +66,14 @@ describe('catalogApi', () => {
     const store = makeStore()
     const stations = await store.dispatch(catalogApi.endpoints.listAllStations.initiate()).unwrap()
     expect(stations.map((s) => s.code)).toEqual(['PAR', 'AMS'])
+  })
+
+  test('listTopDestinations passes the limit and returns the aggregate rows', async () => {
+    const store = makeStore()
+    const destinations = await store.dispatch(catalogApi.endpoints.listTopDestinations.initiate()).unwrap()
+    expect(destinations).toHaveLength(1)
+    expect(destinations[0]).toMatchObject({ code: 'AMS', fromPriceCents: 4550, tripCount: 12 })
+    expect(lastDestinationsUrl?.searchParams.get('limit')).toBe('6')
+    expect(lastDestinationsUrl?.searchParams.get('origin')).toBeNull()
   })
 })

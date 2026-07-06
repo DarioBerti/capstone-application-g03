@@ -10,7 +10,7 @@ import { filterByTimeOfDay, returnQueryFor, type TimeOfDay } from './returnSearc
 import BookingSummary from '../booking/BookingSummary'
 import { useBookingActions } from '../booking/useBookingActions'
 import { useAppSelector } from '../../app/hooks'
-import { useGetTripQuery, useListTripsQuery, type TripQuery } from '../catalog/catalogApi'
+import { useGetTripQuery, useListAllStationsQuery, useListTripsQuery, type TripQuery } from '../catalog/catalogApi'
 import { useListAvailabilityQuery } from '../inventory/inventoryApi'
 import type { Availability, Trip } from '../../types'
 
@@ -113,8 +113,16 @@ export default function SearchPage() {
   const cheapest = trips.length ? Math.min(...trips.map((t) => t.priceCents)) : undefined
   const fastest = trips.length ? Math.min(...trips.map(durationMs)) : undefined
 
-  const from = awaitingReturn && outboundTrip ? outboundTrip.destination.city : origin
-  const to = awaitingReturn && outboundTrip ? outboundTrip.origin.city : destination
+  // The URL params carry station CODES; resolve them to display names off the cached station list
+  // (falling back to the raw code only for the brief first load).
+  const { data: allStations = [] } = useListAllStationsQuery()
+  const stationName = useMemo(() => {
+    const byCode = new Map(allStations.map((s) => [s.code, s.name]))
+    return (code?: string) => (code ? (byCode.get(code) ?? code) : undefined)
+  }, [allStations])
+
+  const from = awaitingReturn && outboundTrip ? outboundTrip.destination.city : stationName(origin)
+  const to = awaitingReturn && outboundTrip ? outboundTrip.origin.city : stationName(destination)
   const routeLabel = from && to ? `${from} → ${to}` : 'All journeys'
   const showLoading = isLoading || resolvingReturn
 

@@ -56,19 +56,21 @@ export default function SearchForm() {
           id="from"
           label="FROM"
           icon="location_on"
-          placeholder="Paris, France"
+          placeholder="Anywhere"
           stations={stations}
           value={from}
           onChange={setFrom}
+          anywhereOption
         />
         <StationCombobox
           id="to"
           label="TO"
           icon="near_me"
-          placeholder="Rome, Italy"
+          placeholder="Anywhere"
           stations={stations}
           value={to}
           onChange={setTo}
+          anywhereOption
         />
         <div className="md:col-span-1 space-y-xs">
           <label className="font-label-caps text-label-caps text-on-surface-variant block ml-xs" htmlFor="departure">
@@ -120,7 +122,7 @@ export default function SearchForm() {
         <div className="md:col-span-1">
           <button
             type="submit"
-            className="w-full h-[68px] motion-gradient text-white rounded-lg flex items-center justify-center gap-sm font-title-lg text-title-lg hover:brightness-110 active:scale-95 transition-all shadow-lg"
+            className="w-full h-[68px] motion-gradient text-on-primary rounded-lg flex items-center justify-center gap-sm font-title-lg text-title-lg hover:brightness-110 active:scale-95 transition-all shadow-lg"
           >
             <Icon name="search" />
             <span>Search</span>

@@ -64,11 +64,25 @@ export interface Order {
   currency: string
   amountCents: number
   legs: OrderLeg[]
+  // Optional until the orders rollout that adds it to OrderResponse lands; guard reads.
+  createdAt?: string
   // Backend-owned hold window. `remainingSeconds` is computed server-side (max(0, expiresAt - now)); the UI
   // renders a countdown from it but is NEVER the authority on expiry — the backend re-checks at pay.
   expiresAt: string | null
   remainingSeconds: number | null
   paymentInitiatedAt: string | null
+}
+
+// One row of the catalog "top destinations" aggregate: the cheapest future fare and how many departures
+// serve that destination (mirrors catalog's DestinationSummaryResponse).
+export interface DestinationSummary {
+  code: string
+  name: string
+  city: string
+  country: string
+  fromPriceCents: number
+  currency: string
+  tripCount: number
 }
 
 // Public seat-availability projection (mirrors inventory's AvailabilityResponse). Advisory browse-time counts.

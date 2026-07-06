@@ -1,5 +1,6 @@
 package it.g03.catalog.service
 
+import it.g03.catalog.dto.DestinationSummaryResponse
 import it.g03.catalog.dto.StationResponse
 import it.g03.catalog.dto.TripFilter
 import it.g03.catalog.dto.TripResponse
@@ -19,4 +20,11 @@ interface CatalogService {
 
     /** Every station, name-sorted — a cacheable bulk read for the storefront's load-once, filter-locally picker. */
     fun listAllStations(): List<StationResponse>
+
+    /**
+     * The most-served upcoming destinations for the storefront's "popular destinations" strip: each destination
+     * station with its cheapest-from price and count of future departures, most trips first. An optional
+     * [origin] narrows to departures leaving one station; [limit] is clamped to a sane 1..24.
+     */
+    fun topDestinations(origin: String?, limit: Int): List<DestinationSummaryResponse>
 }
