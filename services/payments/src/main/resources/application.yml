@@ -93,7 +93,14 @@ resilience4j:
     instances:
       paypal:
         max-attempts: 3
+        # Exponential backoff + jitter (resilience4j ofExponentialRandomBackoff): base 0.5s, ×2 each attempt
+        # (0.5s → 1s), with ±50% randomization so concurrent retries after a shared PSP blip don't thunder it
+        # in lockstep. Bounded by max-attempts (3) and capped by the circuit breaker below.
         wait-duration: PT0.5S
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        enable-randomized-wait: true
+        randomized-wait-factor: 0.5
         retry-exceptions:
           - it.g03.payments.gateway.TransientPspException
   circuitbreaker:
