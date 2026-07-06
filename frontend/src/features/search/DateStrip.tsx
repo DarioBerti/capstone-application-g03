@@ -3,9 +3,9 @@ import Icon from '../../components/Icon'
 import { addDays, describeDay, formatCents } from '../../lib/format'
 import { useListTripsQuery } from '../catalog/catalogApi'
 
-const VISIBLE_DAYS = 7
-// Keep the selected day roughly centred in the window without ever paging before the earliest allowed day.
-const CENTER_OFFSET = 3
+const VISIBLE_DAYS = 9
+// Keep the selected day centred in the window without ever paging before the earliest allowed day.
+const CENTER_OFFSET = 4
 // The services' max page size — large enough to always catch a day's cheapest fare on this catalog.
 const DAY_PRICE_PAGE_SIZE = 100
 
@@ -22,8 +22,11 @@ function DayPrice({ query, day, selected }: { query: DayPriceQuery; day: string;
   if (trips.length === 0) return null
   const cheapest = trips.reduce((min, t) => Math.min(min, t.priceCents), Number.POSITIVE_INFINITY)
   return (
-    <span className={`font-body-sm text-body-sm mt-xs ${selected ? 'opacity-80' : 'text-outline'}`}>
-      from {formatCents(cheapest, trips[0].currency)}
+    <span className="mt-xs whitespace-nowrap">
+      <span className={`font-body-sm text-body-sm ${selected ? 'opacity-80' : 'text-outline'}`}>from </span>
+      <span className={`font-body-md text-body-md font-bold tabular-nums ${selected ? '' : 'text-on-surface'}`}>
+        {formatCents(cheapest, trips[0].currency)}
+      </span>
     </span>
   )
 }
@@ -87,7 +90,7 @@ export default function DateStrip({
               onClick={() => onChange(day)}
               aria-pressed={selected}
               aria-label={`${weekday} ${dayNum} ${month}`}
-              className={`flex flex-col items-center p-md rounded-lg min-w-[100px] transition-colors ${
+              className={`flex flex-col items-center p-sm rounded-lg min-w-[80px] transition-colors ${
                 selected
                   ? 'bg-primary text-on-primary shadow-sm'
                   : 'bg-surface-container-low text-on-surface-variant border border-outline-variant hover:bg-surface-variant'
@@ -96,7 +99,7 @@ export default function DateStrip({
               <span className={`font-label-caps text-label-caps ${selected ? 'opacity-80' : 'text-outline'}`}>
                 {weekday}
               </span>
-              <span className="font-title-lg text-title-lg whitespace-nowrap">
+              <span className="font-body-sm text-body-sm whitespace-nowrap">
                 {dayNum} {month}
               </span>
               {priceQuery && <DayPrice query={priceQuery} day={day} selected={selected} />}

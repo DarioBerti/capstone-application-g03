@@ -72,6 +72,6 @@ describe('DateStrip', () => {
     )
 
     // Assert
-    expect(await screen.findAllByText(/29\.90/)).toHaveLength(7)
+    expect(await screen.findAllByText(/29\.90/)).toHaveLength(9)
   })
 })
