@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { formatCents, formatCountdown, formatDuration } from './format'
+import { formatCents, formatCountdown, formatDayMonth, formatDuration } from './format'
 
 describe('formatCents', () => {
   test('renders cents as euro currency', () => {
@@ -18,6 +18,13 @@ describe('formatCountdown', () => {
 
   test('never goes below zero', () => {
     expect(formatCountdown(-5)).toBe('00:00')
+  })
+})
+
+describe('formatDayMonth', () => {
+  // Noon UTC so no realistic dev/CI timezone shifts the calendar day.
+  test('renders a compact day and month without the year', () => {
+    expect(formatDayMonth('2026-07-15T12:00:00Z')).toBe('15 Jul')
   })
 })
 

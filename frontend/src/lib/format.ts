@@ -13,6 +13,11 @@ export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(LOCALE, { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Compact day + month for a trip's date line, e.g. "24 Jul" (no year — results sit within a near window).
+export function formatDayMonth(iso: string): string {
+  return new Date(iso).toLocaleDateString(LOCALE, { day: '2-digit', month: 'short' })
+}
+
 // Human duration between two ISO instants, e.g. "3h 19m".
 export function formatDuration(departIso: string, arriveIso: string): string {
   const mins = Math.max(0, Math.round((new Date(arriveIso).getTime() - new Date(departIso).getTime()) / 60000))

@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import TripCard from './TripCard'
+import { formatDayMonth } from '../../lib/format'
 import type { Trip } from '../../types'
 
 const trip: Trip = {
@@ -26,6 +27,11 @@ describe('TripCard', () => {
     expect(screen.getByText('Eurostar')).toBeInTheDocument()
     expect(screen.getByText('Paris')).toBeInTheDocument()
     expect(screen.getByText('Amsterdam')).toBeInTheDocument()
+  })
+
+  test('shows the departure date for the trip', () => {
+    render(<TripCard trip={trip} onAction={() => {}} actionLabel="Select" />)
+    expect(screen.getByText(formatDayMonth(trip.departureTime))).toBeInTheDocument()
   })
 
   test('calls onAction with the trip when the action is clicked', async () => {
