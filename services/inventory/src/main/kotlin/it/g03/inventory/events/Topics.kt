@@ -14,6 +14,10 @@ object Topics {
     const val RESERVATION_RESULT = "reservation-result"
     const val SEATS_CONFIRMED = "seats-confirmed"
 
+    // produced: best-effort seat-count change signal (key = tripCode) for read-side consumers (Catalog's
+    // availability projection). Advisory only — losing one must not corrupt seat counts. Same outbox path.
+    const val SEAT_AVAILABILITY = "seat-availability"
+
     // dead-letter sink for commands that exhaust the bounded retry
     const val INVENTORY_DLT = "inventory-dlt"
 }

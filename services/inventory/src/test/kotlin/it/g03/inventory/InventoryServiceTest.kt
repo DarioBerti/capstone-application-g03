@@ -3,6 +3,7 @@ package it.g03.inventory
 import it.g03.inventory.entities.TripSeats
 import it.g03.inventory.entities.Reservation
 import it.g03.inventory.entities.ReservationStatus
+import it.g03.inventory.events.AvailabilityChangedEvent
 import it.g03.inventory.events.ReservationResultEvent
 import it.g03.inventory.events.SeatsConfirmedEvent
 import it.g03.inventory.events.Topics
@@ -59,6 +60,10 @@ class InventoryServiceTest {
 
     private fun seatsConfirmedStatusOf(orderId: String) =
         replies(Topics.SEATS_CONFIRMED, orderId).map { objectMapper.readValue(it.payload, SeatsConfirmedEvent::class.java).status }
+
+    // availability-changed rows appended for a trip (the outbox key for this topic is the tripCode)
+    private fun availabilityEventsOf(tripCode: String) =
+        replies(Topics.SEAT_AVAILABILITY, tripCode).map { objectMapper.readValue(it.payload, AvailabilityChangedEvent::class.java) }
 
     @BeforeEach  // runs before each test method to start from a known database state
     fun cleanSlate() {
@@ -144,12 +149,12 @@ class InventoryServiceTest {
     @Test
     fun `release restocks, is idempotent, and appends no reply`() {
         service.reserve("order-1", trip, 4)
-        val afterReserve = outbox.count() // the single reservation-result reply from reserve
 
         assertEquals(ReservationStatus.RELEASED, service.release("order-1", trip).status)
         assertEquals(ReservationStatus.RELEASED, service.release("order-1", trip).status)
         assertEquals(10, available(trip), "released seats come back exactly once")
-        assertEquals(afterReserve, outbox.count(), "release must not append any outbox reply")
+        // release restocks (which emits an advisory availability-changed), but never a saga REPLY to Orders
+        assertEquals(listOf("RESERVED"), reservationStatusOf("order-1"), "release adds no reservation-result reply")
         assertTrue(seatsConfirmedStatusOf("order-1").isEmpty(), "release never emits seats-confirmed")
     }
 
@@ -205,7 +210,9 @@ class InventoryServiceTest {
 
         assertEquals(1, swept)
         assertEquals(10, available(trip))
-        assertEquals(0, outbox.count(), "the reconciler sweep emits no reply (no order is waiting on it)")
+        // the sweep restocks (emitting an advisory availability-changed) but no saga REPLY — no order awaits it
+        assertTrue(reservationStatusOf("order-stranded").isEmpty(), "the sweep emits no reservation-result reply")
+        assertTrue(seatsConfirmedStatusOf("order-stranded").isEmpty(), "the sweep emits no seats-confirmed reply")
         assertEquals(
             ReservationStatus.EXPIRED,
             requireNotNull(reservations.findByOrderIdAndTripCode("order-stranded", trip)) {
@@ -233,5 +240,87 @@ class InventoryServiceTest {
         assertEquals(7, byTrip.getValue(trip).available, "availability reflects the live decrement")
         assertEquals(10, byTrip.getValue(trip).totalSeats)
         assertEquals(5, byTrip.getValue("FR1000-20260701").available)
+    }
+
+    // Verifies a successful reserve emits ONE availability-changed carrying the fresh (post-decrement) count
+    @Test
+    fun `reserve emits availability-changed with the fresh seat count`() {
+        service.reserve("order-1", trip, 3) // 10 -> 7
+
+        val events = availabilityEventsOf(trip)
+        assertEquals(1, events.size)
+        assertEquals(7, events.single().available)
+        assertEquals(10, events.single().totalSeats)
+    }
+
+    // Verifies the reserve that takes the last seat emits available=0 so a read-side projection learns sold-out
+    @Test
+    fun `reserving the last seats emits availability-changed with available zero`() {
+        service.reserve("order-1", trip, 10) // 10 -> 0
+
+        assertEquals(listOf(0), availabilityEventsOf(trip).map { it.available })
+    }
+
+    // Verifies a sold-out (REJECTED) reserve emits NO availability-changed (the count did not move)
+    @Test
+    fun `rejected reserve emits no availability-changed`() {
+        service.reserve("order-1", trip, 10) // sells out, emits available=0
+        service.reserve("order-2", trip, 1) // REJECTED, no change
+
+        assertEquals(listOf(0), availabilityEventsOf(trip).map { it.available }, "only the sell-out reserve emits")
+    }
+
+    // Verifies release restocks and emits availability-changed with the restored count
+    @Test
+    fun `release emits availability-changed with the restocked count`() {
+        service.reserve("order-1", trip, 4) // 10 -> 6 (emits 6)
+        service.release("order-1", trip) // 6 -> 10 (emits 10)
+
+        assertEquals(listOf(6, 10), availabilityEventsOf(trip).map { it.available })
+    }
+
+    // Verifies a plain confirm (no restock) emits NO availability-changed; only the reserve did
+    @Test
+    fun `plain confirm emits no availability-changed`() {
+        service.reserve("order-1", trip, 2) // emits 8
+        service.confirm("order-1", trip) // CONFIRMED, count unchanged
+
+        assertEquals(listOf(8), availabilityEventsOf(trip).map { it.available })
+    }
+
+    // Verifies a confirm after TTL restocks and emits availability-changed with the restored count
+    @Test
+    fun `confirm after TTL emits availability-changed with the restocked count`() {
+        items.save(TripSeats(tripCode = trip, totalSeats = 10, available = 9))
+        reservations.save(
+            Reservation(
+                orderId = "order-slow", tripCode = trip, qty = 1,
+                status = ReservationStatus.RESERVED,
+                createdAt = Instant.now().minusSeconds(600),
+                expiresAt = Instant.now().minusSeconds(300),
+            ),
+        )
+
+        service.confirm("order-slow", trip) // EXPIRED + restock: 9 -> 10
+
+        assertEquals(listOf(10), availabilityEventsOf(trip).map { it.available })
+    }
+
+    // Verifies the reconciler sweep restocks and emits availability-changed for the swept trip
+    @Test
+    fun `reconciler sweep emits availability-changed with the restocked count`() {
+        items.save(TripSeats(tripCode = trip, totalSeats = 10, available = 8))
+        reservations.save(
+            Reservation(
+                orderId = "order-stranded", tripCode = trip, qty = 2,
+                status = ReservationStatus.RESERVED,
+                createdAt = Instant.now().minusSeconds(600),
+                expiresAt = Instant.now().minusSeconds(300),
+            ),
+        )
+
+        service.expireOverdue(Instant.now()) // 8 -> 10
+
+        assertEquals(listOf(10), availabilityEventsOf(trip).map { it.available })
     }
 }

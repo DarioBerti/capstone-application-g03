@@ -18,7 +18,7 @@ import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-@SpringBootTest  // boot the full Spring app context to test controller -> service -> repository wiring
+@SpringBootTest(properties = ["app.kafka-listeners-enabled=false"]) // full context, controller -> service -> repository; availability listener off (no broker in tests)
 @Import(TestcontainersConfiguration::class)
 class CatalogControllerTest {
 

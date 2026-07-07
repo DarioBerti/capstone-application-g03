@@ -4,6 +4,7 @@ import it.g03.inventory.dto.AvailabilityResponse
 import it.g03.inventory.dto.toResponse
 import it.g03.inventory.entities.Reservation
 import it.g03.inventory.entities.ReservationStatus
+import it.g03.inventory.events.AvailabilityChangedEvent
 import it.g03.inventory.events.ReservationResultEvent
 import it.g03.inventory.events.SeatsConfirmedEvent
 import it.g03.inventory.events.Topics
@@ -75,6 +76,7 @@ class InventoryServiceImpl(
             ),
         )
         appendReservationResult(reservation)
+        if (reserved) appendAvailabilityChanged(tripCode) // seats moved (a reject leaves the count unchanged)
         outcomes(if (reserved) "reserved" else "rejected").increment()
         log.info("reserve order={} trip={} qty={} -> {}", orderId, tripCode, qty, status)
         return ReserveOutcome(reservation, replayed = false)
@@ -96,6 +98,7 @@ class InventoryServiceImpl(
                 r.releasedAt = Instant.now()
                 reservations.save(r) // explicit save: restock() flushes+clears the context
                 items.restock(r.tripCode, r.qty)
+                appendAvailabilityChanged(r.tripCode)
                 log.warn("confirm arrived after TTL for order={} -> EXPIRED (restocked)", orderId)
             } else {
                 r.status = ReservationStatus.CONFIRMED
@@ -125,6 +128,7 @@ class InventoryServiceImpl(
             r.releasedAt = Instant.now()
             reservations.save(r) // explicit save: restock() flushes+clears the context
             items.restock(r.tripCode, r.qty)
+            appendAvailabilityChanged(r.tripCode)
             log.info("released {} reservation for order={} trip={} (restocked {})", if (wasConfirmed) "CONFIRMED" else "RESERVED", orderId, tripCode, r.qty)
         }
         return r
@@ -147,6 +151,7 @@ class InventoryServiceImpl(
         reservations.saveAll(overdue)
 
         overdue.forEach { items.restock(it.tripCode, it.qty) }
+        overdue.map { it.tripCode }.distinct().forEach { appendAvailabilityChanged(it) }
 
         if (overdue.isNotEmpty()) {
             outcomes("expired").increment()
@@ -174,6 +179,18 @@ class InventoryServiceImpl(
     private fun appendSeatsConfirmed(r: Reservation) {
         val status = if (r.status == ReservationStatus.CONFIRMED) STATUS_CONFIRMED else STATUS_EXPIRED
         outbox.append(Topics.SEATS_CONFIRMED, r.orderId, SeatsConfirmedEvent(orderId = r.orderId, tripCode = r.tripCode, status = status))
+    }
+
+    // Best-effort seat-count signal for read-side consumers. Reads the row back AFTER the mutation (the
+    // decrement/restock flushes+clears) so the emitted count is authoritative rather than arithmetic; keyed by
+    // tripCode for per-trip ordering. Appended in the caller's tx via the same outbox as the saga replies.
+    private fun appendAvailabilityChanged(tripCode: String) {
+        val row = items.findById(tripCode).orElse(null) ?: return
+        outbox.append(
+            Topics.SEAT_AVAILABILITY,
+            tripCode,
+            AvailabilityChangedEvent(tripCode = tripCode, available = row.available, totalSeats = row.totalSeats),
+        )
     }
 
     private companion object {

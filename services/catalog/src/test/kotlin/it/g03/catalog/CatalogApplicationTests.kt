@@ -5,7 +5,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 
 // Minimal smoke test to verify the Spring context starts (against Testcontainers PostgreSQL).
-@SpringBootTest
+@SpringBootTest(properties = ["app.kafka-listeners-enabled=false"]) // no broker in tests -> keep the availability listener off
 @Import(TestcontainersConfiguration::class)
 class CatalogApplicationTests {
 

@@ -17,6 +17,7 @@ import org.springframework.data.domain.Sort
 import org.springframework.data.jpa.domain.Specification
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
 import java.time.OffsetDateTime
 
 /**
@@ -41,6 +42,13 @@ class CatalogServiceImpl(
         val page = trips.findAll(filter.toSpecification(), pageable)
         val stationsByCode = resolveStations(page.content)
         return page.map { it.toTripResponse(stationsByCode) }
+    }
+
+    // Projects an Inventory seat-availability event into the local read-model. A no-op (0 rows) means Catalog
+    // doesn't list this trip (fine) or the event is stale (the guard in the query rejected it). Off the money path.
+    @Transactional
+    override fun applyAvailability(tripCode: String, available: Int, occurredAt: Instant) {
+        trips.applyAvailability(tripCode, available, occurredAt)
     }
 
     // Single trip lookup by its public business code; a missing code is a domain not-found (-> 404).
@@ -87,7 +95,10 @@ class CatalogServiceImpl(
 }
 
 // Builds a composable Specification from the filter. Each clause is added only when its field is present,
-// so only supplied filters constrain the query (an empty filter matches everything).
+// so only supplied filters constrain the query (an empty filter matches everything). A trailing, always-on
+// clause hides sold-out trips (browsing something you can't buy is pointless); unknown availability (NULL,
+// no event applied yet) stays visible. Single-trip byCode() bypasses this so a held-then-sold-out return leg
+// still resolves.
 private fun TripFilter.toSpecification(): Specification<Trip> =
     Specification.allOf(
         listOfNotNull(
@@ -98,8 +109,14 @@ private fun TripFilter.toSpecification(): Specification<Trip> =
             departAfter?.let { departsAtOrAfter(it) },
             departBefore?.let { departsAtOrBefore(it) },
             maxPriceCents?.let { priceAtMost(it) },
-        ),
+        ) + notSoldOut(),
     )
+
+// available_seats IS NULL (unknown -> show) OR > 0 (seats remain). Excludes only known-sold-out (= 0) rows.
+private fun notSoldOut(): Specification<Trip> =
+    Specification { root, _, cb ->
+        cb.or(cb.isNull(root.get<Int>("availableSeats")), cb.greaterThan(root.get<Int>("availableSeats"), 0))
+    }
 
 private fun eq(attribute: String, value: Any): Specification<Trip> =
     Specification { root, _, cb -> cb.equal(root.get<Any>(attribute), value) }

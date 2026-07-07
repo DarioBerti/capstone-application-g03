@@ -20,13 +20,35 @@ Inventory owns those for the same trip `code`s. The two stores share only the `c
 
 - **Off the money path.** Checkout must never depend on Catalog being up or fresh. Don't introduce a
   synchronous or eventing dependency that puts Catalog on the place-order → reserve → authorize → confirm
-  path.
+  path. (The availability read-model below is compatible: it is a **consume-only, after-the-fact** projection
+  — checkout never blocks on Catalog or on this consumer's lag.)
 - **Ownership boundary.** Catalog reads/writes only its own schema. It must not read or write Inventory's
-  (or any other service's) tables — coordinate via the shared trip `code` vocabulary only.
+  (or any other service's) tables — coordinate via the shared trip `code` vocabulary only. The
+  `trips.available_seats` hint is a **derived local projection** kept in Catalog's own schema, never a read of
+  Inventory's tables.
 - **Price is non-negative.** Enforced at the database level; treat it as a hard invariant, not a code
   convenience.
 - **Staleness is acceptable, incorrectness is not.** It's fine for Catalog to serve slightly stale data;
-  it's not fine to serve wrong prices/ids.
+  it's not fine to serve wrong prices/ids. The seat-availability projection is deliberately **advisory and
+  eventually consistent** — the authoritative never-oversell guard stays Inventory's atomic decrement at
+  reserve time; a stale count here only ever hides a trip a beat late or shows one a beat early.
+
+## Availability read-model (the one eventing dependency)
+
+Catalog keeps a local `trips.available_seats` hint so search can hide sold-out trips **server-side with
+correct pagination** (a client-side join can't paginate correctly — sold-out rows would eat page slots).
+
+- **Consume-only.** Catalog subscribes to Inventory's `seat-availability` topic (`events/AvailabilityListener`)
+  and upserts the count via `CatalogService.applyAvailability` → `TripRepository.applyAvailability`. It
+  **never produces** a domain event and **never calls** another service. The only thing it puts on Kafka is
+  the dead-letter recoverer (`events/KafkaErrorHandler` → `catalog-dlt`) — operational, not domain.
+- **Advisory + eventually consistent.** `available_seats IS NULL` = unknown → the trip is shown; `= 0` =
+  sold out → hidden from **search only**. Single-trip `byCode`/`GET /trips/{code}` is intentionally
+  unfiltered, so a held-then-sold-out return leg still resolves.
+- **Idempotent + out-of-order-safe.** The projection update is guarded by `seats_updated_at` (last-writer-by
+  event-time), so a redelivery or a reordered event can't overwrite a fresher count.
+- Adds a `spring-kafka` dependency (consumer only). The CAP/staleness justification is a **team** judgment —
+  author it in `docs/design.md`, not here.
 
 ## Do
 
@@ -44,8 +66,10 @@ Inventory owns those for the same trip `code`s. The two stores share only the `c
 - Don't let the controller call the repository directly, or push logic into the controller.
 - Don't return raw entities or unbounded `List`s from read endpoints.
 - Don't rely on Hibernate to create/alter schema (`ddl-auto` stays at `validate`); don't use H2.
-- Don't add Kafka/eventing or cross-service sync calls unless a real requirement forces it — and if it
-  ever does, it must not compromise the "off the money path" invariant above.
+- Don't add cross-service **sync** calls, and don't **produce** domain events or add eventing beyond the one
+  consume-only availability read-model documented above — and never in a way that compromises the "off the
+  money path" invariant. (Catalog consuming Inventory's `seat-availability` is the sanctioned exception: a
+  read-side projection, not a producer, and never on the checkout path.)
 - Don't make checkout, Orders, or Inventory block on a Catalog response.
 
 ## Source layout

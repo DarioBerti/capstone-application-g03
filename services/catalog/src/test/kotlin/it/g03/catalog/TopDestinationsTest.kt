@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
  * PostgreSQL: per-destination trip count + cheapest-from price, future-only, origin filter, ordering, limit
  * clamping, and the public cache header. Seeds a controlled dataset through the repositories.
  */
-@SpringBootTest
+@SpringBootTest(properties = ["app.kafka-listeners-enabled=false"]) // no broker in tests -> keep the availability listener off
 @Import(TestcontainersConfiguration::class)
 class TopDestinationsTest {
 

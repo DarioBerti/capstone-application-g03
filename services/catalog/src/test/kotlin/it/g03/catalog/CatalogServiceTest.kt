@@ -12,15 +12,17 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.data.domain.PageRequest
+import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // Behaviour of the service layer: pagination + Specification filtering + station resolution, against real PostgreSQL.
-@SpringBootTest
+@SpringBootTest(properties = ["app.kafka-listeners-enabled=false"]) // no broker in tests -> keep the availability listener off
 @Import(TestcontainersConfiguration::class)
 class CatalogServiceTest {
 
@@ -113,5 +115,60 @@ class CatalogServiceTest {
     @Test
     fun `byCode throws for an unknown code`() {
         assertFailsWith<NoSuchElementException> { service.byCode("NO-SUCH-TRIP") }
+    }
+
+    @Test
+    fun `applyAvailability projects the seat count onto the trip`() {
+        service.applyAvailability("FR9592-20260629", 5, Instant.now())
+
+        assertEquals(5, service.byCode("FR9592-20260629").availableSeats)
+    }
+
+    @Test
+    fun `applyAvailability ignores a stale (older) event`() {
+        val fresh = Instant.now()
+        service.applyAvailability("FR9592-20260629", 3, fresh)
+        service.applyAvailability("FR9592-20260629", 9, fresh.minusSeconds(60)) // older -> must not overwrite
+
+        assertEquals(3, service.byCode("FR9592-20260629").availableSeats, "a stale event must not overwrite a fresher count")
+    }
+
+    @Test
+    fun `search hides sold-out trips but keeps available and unknown ones`() {
+        service.applyAvailability("FR9592-20260629", 0, Instant.now()) // sold out -> hidden
+        service.applyAvailability("FR9612-20260629", 5, Instant.now()) // seats remain -> shown
+        // IC1015-20260629 gets no event -> available_seats stays NULL (unknown) -> shown
+
+        val page = service.search(TripFilter(), PageRequest.of(0, 20))
+
+        val codes = page.content.map { it.code }.toSet()
+        assertEquals(2, page.totalElements.toInt(), "the sold-out trip is excluded from the paginated total")
+        assertTrue("FR9592-20260629" !in codes, "sold-out trip is hidden")
+        assertTrue("FR9612-20260629" in codes && "IC1015-20260629" in codes, "available and unknown trips are shown")
+    }
+
+    @Test
+    fun `search shows a trip whose availability is unknown`() {
+        val page = service.search(TripFilter(), PageRequest.of(0, 20))
+
+        assertEquals(3, page.totalElements.toInt(), "no events applied -> all NULL -> all shown")
+        assertTrue(page.content.all { it.availableSeats == null })
+    }
+
+    @Test
+    fun `byCode still returns a sold-out trip (single-trip lookup bypasses the search filter)`() {
+        service.applyAvailability("FR9592-20260629", 0, Instant.now())
+
+        val trip = service.byCode("FR9592-20260629")
+
+        assertEquals("FR9592-20260629", trip.code)
+        assertEquals(0, trip.availableSeats, "a held-then-sold-out return leg must still resolve by code")
+    }
+
+    @Test
+    fun `applyAvailability for an unlisted trip code is a harmless no-op`() {
+        service.applyAvailability("ZZ0000-20260629", 7, Instant.now())
+
+        assertNull(trips.findByCode("ZZ0000-20260629"), "no row is created for a trip Catalog doesn't list")
     }
 }

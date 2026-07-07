@@ -21,7 +21,7 @@ import kotlin.test.assertNotNull
  * freshly migrated, untouched database — so this test observes the seeds exactly as Flyway left them. It only
  * reads; it must never mutate.
  */
-@SpringBootTest(properties = ["test.marker=v6-seed"])
+@SpringBootTest(properties = ["test.marker=v6-seed", "app.kafka-listeners-enabled=false"])
 @Import(TestcontainersConfiguration::class)
 class SeedMigrationTest {
 

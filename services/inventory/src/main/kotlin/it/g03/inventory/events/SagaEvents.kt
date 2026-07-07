@@ -52,3 +52,14 @@ data class SeatsConfirmedEvent(
     val status: String,
     val occurredAt: Instant = Instant.now(),
 )
+
+// produced: emitted whenever a trip's available seat count CHANGES (reserve success / any restock), keyed by
+// tripCode. Read-side consumers (Catalog's availability projection) upsert `available`; it is advisory, not a
+// saga reply — the authoritative never-oversell guard stays the atomic decrement at reserve time.
+data class AvailabilityChangedEvent(
+    val eventId: UUID = UUID.randomUUID(),
+    val tripCode: String,
+    val available: Int,
+    val totalSeats: Int,
+    val occurredAt: Instant = Instant.now(),
+)

@@ -14,7 +14,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
  * The catalog is the pre-login storefront window: browsing trips and stations must be public (no token),
  * while a token is still accepted when present. Verifies the public-GET rule in SecurityConfig.
  */
-@SpringBootTest
+@SpringBootTest(properties = ["app.kafka-listeners-enabled=false"]) // no broker in tests -> keep the availability listener off
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration::class)
 class CatalogSecurityTest {

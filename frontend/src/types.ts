@@ -36,6 +36,10 @@ export interface Trip {
   // Signed browse-time price quote (JWS). Carried into add-leg so the backend snapshots the price it verifies
   // locally — no synchronous Catalog call on the money path.
   priceToken: string
+  // Advisory seat count from Catalog's availability read-model (projected off Inventory events). null/undefined
+  // = unknown (not yet learned). Sold-out (0) trips are already filtered out of search server-side, so the
+  // storefront only uses this for the low/plenty seat badges.
+  availableSeats?: number | null
 }
 
 // Spring Data `Page<T>` (only the fields the UI uses).

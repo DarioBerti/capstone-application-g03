@@ -44,7 +44,12 @@ all center on it.
   `payment-result`, `seats-confirmed`, `payment-captured` (reservation/confirm replies carry the `tripCode` so
   a multi-leg booking maps each reply to its leg); terminal/notify `order-confirmed`, `order-rejected`,
   `notification-requested`; and a dead-letter topic per consuming service (`orders-dlt`, `inventory-dlt`,
-  `payments-dlt`).
+  `payments-dlt`, `catalog-dlt`).
+- Read-side eventing (off the money path): Inventory emits `seat-availability` (keyed by `tripCode`, via its
+  outbox whenever a seat count changes); **Catalog consumes it** into a local advisory `available_seats`
+  projection so browse can hide sold-out trips with correct server-side pagination. Consume-only, eventually
+  consistent — never on the checkout path (the authoritative never-oversell guard stays Inventory's atomic
+  decrement).
 
 ## General rules
 - When editing or creating code files, do NOT add useless comments in any circumstance. The only comments which can be considered useful are the following:

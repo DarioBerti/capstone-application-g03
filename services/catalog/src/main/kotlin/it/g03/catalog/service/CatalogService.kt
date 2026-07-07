@@ -6,6 +6,7 @@ import it.g03.catalog.dto.TripFilter
 import it.g03.catalog.dto.TripResponse
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
+import java.time.Instant
 
 /**
  * Catalog business-layer contract (Controller -> Service -> Repository). The controller depends on this
@@ -14,6 +15,13 @@ import org.springframework.data.domain.Pageable
 interface CatalogService {
     fun search(filter: TripFilter, pageable: Pageable): Page<TripResponse>
     fun byCode(code: String): TripResponse
+
+    /**
+     * Applies an Inventory `seat-availability` event to the local availability read-model. Consumed off Kafka
+     * (never on the money path); advisory only. Idempotent and out-of-order-safe — a stale event (older than
+     * the last applied one) is ignored.
+     */
+    fun applyAvailability(tripCode: String, available: Int, occurredAt: Instant)
 
     /** Paginated stations for the origin/destination pickers; an optional `q` typeahead matches name/city/code. */
     fun listStations(q: String?, pageable: Pageable): Page<StationResponse>

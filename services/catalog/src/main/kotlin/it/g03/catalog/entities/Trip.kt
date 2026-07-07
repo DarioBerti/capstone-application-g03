@@ -61,6 +61,16 @@ class Trip(
     @Column(nullable = false, length = 3)
     val currency: String = "EUR",
 
+    // Advisory availability projection, kept fresh by consuming Inventory's seat-availability events (Catalog
+    // owns only this derived hint, not Inventory's tables). NULL = unknown (shown); 0 = sold out (hidden from
+    // search). `var` because the projection updates it (JPA mutable-entity exception, root CLAUDE). seatsUpdatedAt
+    // holds the applied event time so an out-of-order event can't overwrite a fresher one.
+    @Column(name = "available_seats")
+    var availableSeats: Int? = null,
+
+    @Column(name = "seats_updated_at")
+    var seatsUpdatedAt: Instant? = null,
+
     // DB-owned audit stamps (DEFAULT now()); read-only from the entity's point of view
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     val createdAt: Instant = Instant.EPOCH,

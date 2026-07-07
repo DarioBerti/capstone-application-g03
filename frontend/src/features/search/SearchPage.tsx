@@ -11,7 +11,6 @@ import BookingSummary from '../booking/BookingSummary'
 import { useBookingActions } from '../booking/useBookingActions'
 import { useAppSelector } from '../../app/hooks'
 import { useGetTripQuery, useListAllStationsQuery, useListTripsQuery, type TripQuery } from '../catalog/catalogApi'
-import { useListAvailabilityQuery } from '../inventory/inventoryApi'
 import { todayIso } from '../../lib/format'
 import { ACTIVE_LEG_STATUSES } from '../booking/legStatus'
 import type { Availability, Trip } from '../../types'
@@ -25,6 +24,14 @@ function sortTrips(trips: Trip[], key: SortKey): Trip[] {
   const copy = [...trips]
   if (key === 'cheapest') return copy.sort((a, b) => a.priceCents - b.priceCents)
   return copy.sort((a, b) => durationMs(a) - durationMs(b))
+}
+
+// Seat badge input, sourced from Catalog's availability read-model on the trip itself (sold-out trips are
+// already filtered out server-side). Unknown (null) availability => no badge.
+export function availabilityOf(trip: Trip): Availability | undefined {
+  return trip.availableSeats != null
+    ? { tripCode: trip.code, available: trip.availableSeats, totalSeats: trip.availableSeats }
+    : undefined
 }
 
 export default function SearchPage() {
@@ -91,7 +98,6 @@ export default function SearchPage() {
   const setPageIndex = (index: number) => setPaging({ key: queryKey, index })
   const query: TripQuery = { ...baseQuery, page: pageIndex }
   const { data: page, isLoading, isError, error, refetch } = useListTripsQuery(query, { skip: resolvingReturn })
-  const { data: availability = [] } = useListAvailabilityQuery()
 
   // Per-card action: normally "Select" (start outbound); once an outbound is held, the trips become
   // "Add return"; the outbound trip itself and any card while the booking is already full are disabled.
@@ -101,12 +107,6 @@ export default function SearchPage() {
     if (awaitingReturn) return { label: 'Add return', disabled: false }
     return { label: 'Select', disabled: false }
   }
-
-  const availByTrip = useMemo(() => {
-    const m = new Map<string, Availability>()
-    for (const a of availability) m.set(a.tripCode, a)
-    return m
-  }, [availability])
 
   const [pendingTrip, setPendingTrip] = useState<string | null>(null)
   const onAction = async (trip: Trip) => {
@@ -122,6 +122,8 @@ export default function SearchPage() {
     }
   }
 
+  // Sold-out trips are filtered out server-side by Catalog's availability read-model, so here we only sort
+  // the current page.
   const trips = useMemo(() => sortTrips(page?.content ?? [], sort), [page, sort])
   // The URL params carry station CODES; resolve them to display names off the cached station list
   // (falling back to the raw code only for the brief first load).
@@ -191,7 +193,7 @@ export default function SearchPage() {
               <TripCard
                 key={trip.id}
                 trip={trip}
-                availability={availByTrip.get(trip.code)}
+                availability={availabilityOf(trip)}
                 onAction={onAction}
                 actionLabel={action.label}
                 actionDisabled={action.disabled}

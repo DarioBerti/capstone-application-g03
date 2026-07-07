@@ -28,7 +28,10 @@ one last seat — can both buy it?* The answer must always be no.
   mid-checkout, before the user can pay).
 - **The synchronous answer is load-bearing; events are not.** The reserve/confirm/release HTTP outcome
   is what the saga depends on. Emitted events are best-effort signals published **after commit** —
-  losing one must not corrupt seat counts.
+  losing one must not corrupt seat counts. This includes the `seat-availability` signal (emitted via the
+  same outbox whenever `available` changes: reserve success, release, expiry, sweep) that feeds Catalog's
+  read-side availability projection — advisory only, keyed by `tripCode`; a lost or reordered one at worst
+  makes a browse count briefly stale, never wrong.
 - **Document the consistency choice.** The CAP/PACELC stance for this service is a team judgment;
   keep it stated and keep the code consistent with it. (Author the justification in `docs/`, not here.)
 

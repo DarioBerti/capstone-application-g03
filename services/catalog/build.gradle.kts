@@ -30,6 +30,12 @@ dependencies {
 	// Security: validate Keycloak-issued JWTs as an OAuth2 resource server (lazy JWKS, see application.yml)
 	implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
 
+	// Read-side availability projection: CONSUMES Inventory's seat-availability events to keep a local
+	// available_seats hint (advisory, off the money path). The starter pulls in spring-kafka AND Boot 4's
+	// Kafka auto-configuration (module spring-boot-kafka) that builds the consumer factory + the KafkaTemplate
+	// the dead-letter recoverer needs — bare spring-kafka does not auto-configure under Boot 4's modules.
+	implementation("org.springframework.boot:spring-boot-starter-kafka")
+
 	// Observability (Pillar D): health probes, Prometheus metrics, OTel tracing
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("io.micrometer:micrometer-registry-prometheus")

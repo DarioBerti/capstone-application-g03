@@ -35,6 +35,10 @@ data class TripResponse(
     // Signed, short-lived price quote (JWS). The SPA carries it into add-leg so Orders can snapshot the price
     // it verifies locally — no synchronous Catalog call on the money path.
     val priceToken: String,
+    // Advisory seat count from the availability read-model (projected off Inventory events). NULL = unknown
+    // (not yet learned); the storefront renders low/plenty badges off it. Sold-out (0) rows are already
+    // filtered out of search server-side.
+    val availableSeats: Int?,
 )
 
 // Optional query filters for the paginated trip list. Null fields contribute no predicate, so an empty
@@ -67,4 +71,5 @@ fun Trip.toResponse(origin: StationResponse, destination: StationResponse, price
     priceCents = priceCents,
     currency = currency,
     priceToken = priceToken,
+    availableSeats = availableSeats,
 )
