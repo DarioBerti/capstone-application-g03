@@ -1,35 +1,33 @@
-// Minimal typing + loader for PayPal's Card-Fields SDK (Advanced Card Payments). The card inputs render inside
-// PayPal-owned iframes, so the PAN/CVV never touch our bundle — we only ever receive the approved order id.
+// Minimal typing + loader for PayPal's Buttons SDK (PayPal Checkout). Clicking the button opens PayPal's own
+// hosted approval flow (redirect/popup) where the buyer approves the order or enters a card — none of it touches
+// our bundle. We only ever receive back the approved order id, which we forward to `POST /pay`.
 
-export interface PayPalCardField {
-  render(container: string | HTMLElement): Promise<void>
+// Subset of PayPal's button style options we use; see PayPal's docs for the full set.
+export interface PayPalButtonsStyle {
+  layout?: 'vertical' | 'horizontal'
+  color?: 'gold' | 'blue' | 'silver' | 'white' | 'black'
+  shape?: 'rect' | 'pill'
+  label?: 'paypal' | 'checkout' | 'buynow' | 'pay'
+  height?: number
 }
 
-export interface PayPalCardFields {
-  isEligible(): boolean
-  NameField(): PayPalCardField
-  NumberField(): PayPalCardField
-  ExpiryField(): PayPalCardField
-  CVVField(): PayPalCardField
-  submit(): Promise<void>
-}
-
-// CSS applied to the input *inside* PayPal's iframe, keyed by selector (`input`, `::placeholder`, `:focus`, …).
-// PayPal only honours a whitelist of properties (typography, colour, padding); border/background are ignored, so
-// the visible box stays our outer container.
-export type PayPalCardFieldsStyle = Record<string, Record<string, string>>
-
-export interface PayPalCardFieldsOptions {
-  // Return the PayPal order the browser should approve (created server-side for this booking).
+export interface PayPalButtonsOptions {
+  // Return the PayPal order the buyer should approve (created server-side for this booking).
   createOrder: () => Promise<string>
-  // Fired once PayPal has attached the card + run 3DS; `orderID` is the approved order to authorize.
-  onApprove: (data: { orderID: string }) => void
-  onError: (error: unknown) => void
-  style?: PayPalCardFieldsStyle
+  // Fired once the buyer approves in PayPal's flow; `orderID` is the approved order to authorize.
+  onApprove: (data: { orderID: string }) => void | Promise<void>
+  onCancel?: () => void
+  onError?: (error: unknown) => void
+  style?: PayPalButtonsStyle
+}
+
+export interface PayPalButtons {
+  render(container: string | HTMLElement): Promise<void>
+  close(): Promise<void>
 }
 
 export interface PayPalNamespace {
-  CardFields(options: PayPalCardFieldsOptions): PayPalCardFields
+  Buttons(options: PayPalButtonsOptions): PayPalButtons
 }
 
 declare global {
@@ -40,24 +38,23 @@ declare global {
 
 const SDK_ORIGIN = 'https://www.paypal.com'
 
-// The SDK is a singleton on the page; load it once (with the session's client token) and reuse. A failed load
-// clears the cache so a later retry can re-attempt.
+// The SDK is a singleton on the page; load it once and reuse. A failed load clears the cache so a later retry
+// can re-attempt.
 let sdkPromise: Promise<PayPalNamespace> | null = null
 
-export function loadPayPalSdk(clientId: string, clientToken: string): Promise<PayPalNamespace> {
+export function loadPayPalSdk(clientId: string): Promise<PayPalNamespace> {
   if (window.paypal) return Promise.resolve(window.paypal)
   if (sdkPromise) return sdkPromise
 
   sdkPromise = new Promise<PayPalNamespace>((resolve, reject) => {
     const params = new URLSearchParams({
       'client-id': clientId,
-      components: 'card-fields',
+      components: 'buttons',
       intent: 'authorize',
       currency: 'EUR',
     })
     const script = document.createElement('script')
     script.src = `${SDK_ORIGIN}/sdk/js?${params.toString()}`
-    script.setAttribute('data-client-token', clientToken)
     script.onload = () =>
       window.paypal
         ? resolve(window.paypal)
