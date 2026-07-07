@@ -27,6 +27,7 @@ const bookingSlice = createSlice({
     orderCleared(state) {
       state.order = null
       state.idempotencyKey = null
+      state.selectedTripCode = null
     },
     idempotencyKeyMinted(state, action: PayloadAction<string>) {
       state.idempotencyKey = action.payload

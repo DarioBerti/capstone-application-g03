@@ -1,10 +1,12 @@
 package it.g03.orders
 
+import it.g03.orders.entities.LegDirection
 import it.g03.orders.entities.Order
 import it.g03.orders.entities.OrderStatus
 import it.g03.orders.repository.OrderLegRepository
 import it.g03.orders.repository.OrderRepository
 import it.g03.orders.service.OrderService
+import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -241,6 +243,41 @@ class OrdersControllerTest {
         mockMvc.perform(get("/api/orders").with(jwt().jwt { it.subject(sub) }))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.content[0].createdAt").exists())
+    }
+
+    // The (order, trip) reservation pair is one-shot across the saga: Inventory replays the stored outcome for
+    // a re-emitted reserve-seats, so a removed trip can never be revived on the SAME booking. Re-adding it must
+    // fail with a clear, actionable 409 — not the misleading "duplicate request (idempotency key)" body the raw
+    // UNIQUE(order_id, trip_code) violation used to produce.
+    @Test
+    fun `re-adding a removed trip to the same booking is a clear 409, not a duplicate-key error`() {
+        val trip = "FR9592-20260629"
+        val id = draftId()
+        orderService.addLeg(id, sub, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip))
+        val legId = legs.findByOrderId(id).single().id
+        orderService.removeLeg(id, sub, legId)
+
+        mockMvc.perform(
+            post("/api/orders/$id/legs")
+                .with(jwt().jwt { it.subject(sub) })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"direction":"OUTBOUND","tripCode":"$trip","qty":1,"priceToken":"${TestPriceQuotes.sign(trip)}"}"""),
+        )
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value(containsString("start a new booking")))
+    }
+
+    // The payment session mirrors pay's PENDING distinction: a reservation still settling (async reply not yet
+    // arrived) is a transient, retryable 409 — not the terminal "no reserved outbound leg" message.
+    @Test
+    fun `opening a payment session while the reservation is settling is a retryable 409`() {
+        val trip = "FR9592-20260629"
+        val id = draftId()
+        orderService.addLeg(id, sub, LegDirection.OUTBOUND, trip, 1, TestPriceQuotes.sign(trip))
+
+        mockMvc.perform(post("/api/orders/$id/paypal-session").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value(containsString("still settling")))
     }
 
     // Verifies idempotency at the HTTP edge: a retried create with the same Idempotency-Key yields ONE booking.

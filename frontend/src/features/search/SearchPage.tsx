@@ -113,7 +113,15 @@ export default function SearchPage() {
     setPendingTrip(trip.code)
     try {
       if (awaitingReturn && activeOrder) {
-        await addReturn(activeOrder.orderId, trip.code, pax, trip.priceToken)
+        await addReturn(
+          activeOrder,
+          trip.code,
+          pax,
+          trip.priceToken,
+          outboundTrip && outboundLeg
+            ? { tripCode: outboundTrip.code, qty: outboundLeg.qty, priceToken: outboundTrip.priceToken }
+            : undefined,
+        )
       } else {
         await startBooking(trip.code, pax, trip.priceToken)
       }
