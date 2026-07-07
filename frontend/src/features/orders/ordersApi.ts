@@ -64,10 +64,16 @@ export const ordersApi = apiSlice.injectEndpoints({
       query: ({ orderId, legId }) => ({ url: `/orders/${orderId}/legs/${legId}`, method: 'DELETE' }),
       invalidatesTags: (_r, _e, { orderId }) => [{ type: 'Order', id: orderId }],
     }),
-    // Pay within the window (202 Accepted). The saga then proceeds async; observe it over SSE / poll.
-    pay: build.mutation<Order, string>({
-      query: (orderId) => ({ url: `/orders/${orderId}/pay`, method: 'POST' }),
-      invalidatesTags: (_r, _e, orderId) => [{ type: 'Order', id: orderId }],
+    // Pay within the window (202 Accepted). The saga then proceeds async; observe it over SSE / poll. The body
+    // carries the PayPal order the browser approved via Card Fields (absent for the legacy one-click path). The
+    // general 'Order' tag also invalidates so the buyer's cart list (CartIndicator) reflects the order leaving HELD.
+    pay: build.mutation<Order, { orderId: string; payPalOrderId?: string }>({
+      query: ({ orderId, payPalOrderId }) => ({
+        url: `/orders/${orderId}/pay`,
+        method: 'POST',
+        data: payPalOrderId ? { payPalOrderId } : undefined,
+      }),
+      invalidatesTags: (_r, _e, { orderId }) => [{ type: 'Order', id: orderId }, 'Order'],
     }),
   }),
 })

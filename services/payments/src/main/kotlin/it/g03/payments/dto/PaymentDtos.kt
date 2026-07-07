@@ -23,3 +23,23 @@ data class AuthorizationResponse(
 
 fun PaymentAuthorization.toResponse(replayed: Boolean = false) =
     AuthorizationResponse(id, orderId, amountCents, currency, status, pspReference, declineReason, replayed)
+
+// --- PayPal Card-Fields session (internal, called by Orders) -------------------------------------------------
+
+// Orders asks Payments to open a PayPal Card-Fields session for a booking about to be paid. Items describe the
+// legs so PayPal shows the products (they sum to amountCents, as elsewhere on the money path).
+data class PayPalSessionRequest(
+    val amountCents: Long,
+    val currency: String,
+    val items: List<PayPalSessionLineItem> = emptyList(),
+)
+
+data class PayPalSessionLineItem(val name: String, val quantity: Int, val unitAmountCents: Long)
+
+// What the browser needs to render Card Fields: the public client-id (for the SDK URL), the per-session client
+// token (SDK auth), and the PayPal order id the SDK approves. No secret or card data crosses this boundary.
+data class PayPalSessionResponse(
+    val clientId: String,
+    val clientToken: String,
+    val payPalOrderId: String,
+)

@@ -236,6 +236,21 @@ class OrderSagaTest {
     }
 
     @Test
+    fun `pay with a Card-Fields PayPal order id persists it and carries it on authorize-payment`() {
+        val order = draft()
+        addOutbound(order.id)
+        saga.onReservationResult(order.id, trip, "RESERVED")
+
+        orderService.pay(order.id, buyer, "PP-ORDER-1")
+
+        // Persisted on the order so a timeout-sweeper re-drive re-sends the same approved order id.
+        assertEquals("PP-ORDER-1", orders.findById(order.id).get().payPalOrderId)
+        val command = outbox.findAll().first { it.topic == Topics.AUTHORIZE_PAYMENT }
+            .let { objectMapper.readValue(it.payload, AuthorizePaymentCommand::class.java) }
+        assertEquals("PP-ORDER-1", command.payPalOrderId, "authorize-payment carries the approved order id")
+    }
+
+    @Test
     fun `one-way fallback bills only the reserved outbound when the return is sold out`() {
         val order = draft()
         addOutbound(order.id)

@@ -17,8 +17,8 @@ class MockPaymentGateway(
     @Value("\${payments.decline-threshold-cents:100000}") private val declineThresholdCents: Long,
 ) : PaymentGateway {
 
-    // The threshold rule is amount-only; line items are display metadata the mock ignores (PayPal uses them).
-    override fun authorize(orderId: String, amountCents: Long, currency: String, items: List<LineItem>): AuthorizationResult =
+    // The threshold rule is amount-only; line items + the browser-approved PayPal order id are ignored by the mock.
+    override fun authorize(orderId: String, amountCents: Long, currency: String, items: List<LineItem>, payPalOrderId: String?): AuthorizationResult =
         if (amountCents < declineThresholdCents) {
             AuthorizationResult.Authorized(pspReference = "AUTH-${UUID.randomUUID()}")
         } else {

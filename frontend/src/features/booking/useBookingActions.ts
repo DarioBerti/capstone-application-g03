@@ -80,9 +80,10 @@ export function useBookingActions() {
   )
 
   // Pay within the window (202 Accepted). The confirm/capture saga then proceeds async — observed over SSE.
+  // payPalOrderId is the browser-approved PayPal order (Card Fields); omitted for the legacy one-click path.
   const payNow = useCallback(
-    async (orderId: string): Promise<Order> => {
-      const updated = await pay(orderId).unwrap()
+    async (orderId: string, payPalOrderId?: string): Promise<Order> => {
+      const updated = await pay({ orderId, payPalOrderId }).unwrap()
       dispatch(orderUpdated(updated))
       return updated
     },

@@ -3,6 +3,8 @@ package it.g03.orders.controller
 import io.github.resilience4j.ratelimiter.annotation.RateLimiter
 import it.g03.orders.dto.AddLegRequest
 import it.g03.orders.dto.OrderResponse
+import it.g03.orders.dto.PayPalSessionResponse
+import it.g03.orders.dto.PayRequest
 import it.g03.orders.dto.toResponse
 import it.g03.orders.entities.OrderStatus
 import it.g03.orders.service.OrderService
@@ -73,14 +75,26 @@ class OrdersController(
         @AuthenticationPrincipal jwt: Jwt,
     ): OrderResponse = service.removeLeg(orderId, buyerSub(jwt), legId).toResponse()
 
-    // POST /api/orders/{id}/pay -> authorize within the window; 202 (confirm/capture proceed asynchronously).
+    // POST /api/orders/{id}/pay -> authorize within the window; 202 (confirm/capture proceed asynchronously). The
+    // optional body carries the PayPal order the browser approved via Card Fields (absent for one-click/mock pay).
     @RateLimiter(name = "orders-intake")
     @PostMapping("/{orderId}/pay")
     fun pay(
         @PathVariable orderId: UUID,
+        @RequestBody(required = false) request: PayRequest?,
         @AuthenticationPrincipal jwt: Jwt,
     ): ResponseEntity<OrderResponse> =
-        ResponseEntity.status(HttpStatus.ACCEPTED).body(service.pay(orderId, buyerSub(jwt)).toResponse())
+        ResponseEntity.status(HttpStatus.ACCEPTED)
+            .body(service.pay(orderId, buyerSub(jwt), request?.payPalOrderId).toResponse())
+
+    // POST /api/orders/{id}/paypal-session -> open a PayPal Card-Fields session for this booking. Orders relays the
+    // buyer's token to the internal payments session endpoint. Returns what the browser SDK needs (no card/secret).
+    @PostMapping("/{orderId}/paypal-session")
+    fun payPalSession(
+        @PathVariable orderId: UUID,
+        @AuthenticationPrincipal jwt: Jwt,
+    ): PayPalSessionResponse =
+        service.createPayPalSession(orderId, buyerSub(jwt), jwt.tokenValue)
 
     // GET /api/orders -> the authenticated buyer's bookings (my-bookings), paginated. Optional filters: `status`
     // (CSV of OrderStatus) and a `createdFrom`/`createdTo` (ISO LocalDate) range resolved to inclusive UTC day

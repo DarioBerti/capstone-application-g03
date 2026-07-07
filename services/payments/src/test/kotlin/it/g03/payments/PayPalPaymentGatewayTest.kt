@@ -78,6 +78,43 @@ class PayPalPaymentGatewayTest {
     }
 
     @Test
+    fun `authorize with an approved PayPal order id authorizes THAT order and never creates one`() {
+        expectTokenOnce()
+        server.expect(requestTo("$base/v2/checkout/orders/PP-ORDER-1/authorize"))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(header("PayPal-Request-Id", "order-1"))
+            .andExpect(header("Authorization", "Bearer tok-123"))
+            .andRespond(
+                withSuccess(
+                    """{"id":"PP-ORDER-1","status":"COMPLETED","purchase_units":[{"payments":{"authorizations":[{"id":"AUTH-42","status":"CREATED"}]}}]}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        val result = gateway.authorize("order-1", 5_000, "EUR", emptyList(), "PP-ORDER-1")
+
+        val authorized = assertIs<AuthorizationResult.Authorized>(result)
+        assertEquals("AUTH-42", authorized.pspReference)
+        server.verify()
+    }
+
+    @Test
+    fun `an approved-order authorize declined (422) maps to Declined, not a failure`() {
+        expectTokenOnce()
+        server.expect(requestTo("$base/v2/checkout/orders/PP-ORDER-2/authorize"))
+            .andRespond(
+                withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body("""{"name":"UNPROCESSABLE_ENTITY","details":[{"issue":"INSTRUMENT_DECLINED"}]}""")
+                    .contentType(MediaType.APPLICATION_JSON),
+            )
+
+        val result = gateway.authorize("order-2", 5_000, "EUR", emptyList(), "PP-ORDER-2")
+
+        assertEquals("INSTRUMENT_DECLINED", assertIs<AuthorizationResult.Declined>(result).reason)
+        server.verify()
+    }
+
+    @Test
     fun `authorize with line items sends purchase_units items and a matching item_total breakdown`() {
         expectTokenOnce()
         server.expect(requestTo("$base/v2/checkout/orders"))

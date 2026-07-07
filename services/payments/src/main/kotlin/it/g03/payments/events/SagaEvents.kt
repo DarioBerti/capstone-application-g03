@@ -19,6 +19,9 @@ data class AuthorizePaymentCommand(
     // The booking legs, for the PSP to record the products. Defaulted empty for backward-compat with any
     // pre-line-items producer (authorize then falls back to charging the amount alone).
     val items: List<PaymentLineItem> = emptyList(),
+    // PayPal order the browser created + approved via Card Fields; the gateway authorizes it instead of using a
+    // server-side card. Null for the legacy/mock path. Persisted on the order so a sweeper re-drive re-sends it.
+    val payPalOrderId: String? = null,
     val eventId: UUID = UUID.randomUUID(),
     val occurredAt: Instant = Instant.now(),
 )

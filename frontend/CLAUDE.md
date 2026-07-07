@@ -38,9 +38,13 @@ backend services are OAuth2 resource servers — the SPA holds no secrets.
   holds that key: **one key per intent (outbound trip + qty), reused across retries, re-minted only when the
   intent changes or after a terminal order.** Generate it with `crypto.randomUUID()`. Never put it in the body.
 - **Identity comes from the token, never the form.** The buyer is taken from the validated JWT server-side.
-- **Payment carries no PSP/card data.** `POST /api/orders/{id}/pay` is a one-click trigger; the PSP (PayPal
-  sandbox) authorizes server-to-server inside the payments service. The checkout card form is **cosmetic** —
-  validate for looks only, and **never transmit any card field**. No secrets or PSP data in the bundle.
+- **The SPA never sees or transmits card data (PCI SAQ A).** Card entry is **PayPal Card Fields** — the
+  Name/Number/Expiry/CVV inputs render inside PayPal-owned iframes (`lib/paypal.ts` + `PaymentForm.tsx`), so the
+  PAN/CVV go PayPal→PayPal and never enter our bundle, state, or any request. Checkout first opens a session
+  (`POST /api/orders/{id}/paypal-session` → `{clientId, clientToken, payPalOrderId}`; `clientId` is public, no
+  secret in the bundle), the SDK approves that order client-side, and `POST /pay` carries only the approved
+  `payPalOrderId`. Never read a card field, never add a non-PayPal card input, and don't put PSP secrets in the
+  bundle. `pay` still carries no card data — just the approved order id.
 - **The hold window is backend-authoritative.** Countdowns are seeded from the order's `remainingSeconds` and
   tick locally for display only (`useCountdown`). The backend re-checks at pay and sweeps at expiry — the UI is
   never the authority on expiry.

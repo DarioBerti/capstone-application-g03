@@ -83,6 +83,10 @@ app:
   # Expected `iss` claim on inbound tokens; SecurityConfig rejects tokens from any other issuer.
   oidc:
     issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/eurotransit}
+  # The ONE synchronous Orders -> Payments call (PayPal Card-Fields session). In-cluster the chart points this at
+  # the payments Service DNS; the local default assumes payments on :8082. Only used when PayPal Card Fields are on.
+  payments:
+    base-url: ${PAYMENTS_BASE_URL:http://localhost:8082}
   # Timeout sweeper (OrderTimeoutSweeper): re-drives orders stuck in a non-terminal state past the deadline by
   # re-emitting the command for their current state (idempotent commands make a re-send safe). This is the
   # liveness backstop of the async saga; tests set enabled=false to avoid racing their assertions.
@@ -161,6 +165,22 @@ resilience4j:
         limit-for-period: 20      # max accepted POST /api/orders per refresh window (demo value, tunable)
         limit-refresh-period: PT1S    # the window -> ~20 accepted req/s sustained
         timeout-duration: PT0S    # controlled refusal: NEVER block/queue waiting for a permit -> shed immediately
+  # Resilience for the ONE re-introduced synchronous money-path call: the PayPal Card-Fields session (Orders ->
+  # Payments). Distinct from the retired async breaker above — this call is browser-blocking, so it needs bounded
+  # retry + a breaker with a fast-fail. The session create is idempotent on PayPal's side (PayPal-Request-Id), so
+  # a retry is safe; on open-circuit the endpoint fails fast and the SPA surfaces a "try again" to the user.
+  retry:
+    instances:
+      payments:
+        max-attempts: 3
+        wait-duration: PT0.2S
+        enable-exponential-backoff: true
+  circuitbreaker:
+    instances:
+      payments:
+        sliding-window-size: 20
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: PT5S
 
 # Kafka's client classes log their ENTIRE resolved config as a multi-hundred-line table at INFO on every
 # client init (ProducerConfig/ConsumerConfig/AdminClientConfig) — pure startup noise that buries real logs.

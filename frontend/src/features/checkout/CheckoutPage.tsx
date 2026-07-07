@@ -15,8 +15,8 @@ import ConfirmedView from './ConfirmedView'
 import RejectedView from './RejectedView'
 
 // Orchestrates the checkout: hydrate the order (from the booking slice, or fetch it on a deep-link/refresh),
-// observe the saga live over SSE (degrading to polling), and branch on status. Payment is the one-click
-// `pay` trigger (no card data leaves the browser).
+// observe the saga live over SSE (degrading to polling), and branch on status. Payment is PayPal Card Fields —
+// the card is entered in PayPal's iframe; the browser only ever forwards the approved order id to `pay`.
 export default function CheckoutPage() {
   const { orderId = '' } = useParams()
   const dispatch = useAppDispatch()
@@ -73,7 +73,7 @@ export default function CheckoutPage() {
         </aside>
         <section className="col-span-12 lg:col-span-6">
           {payable ? (
-            <PaymentForm order={order} onPay={() => payNow(order.orderId)} processing={paying} />
+            <PaymentForm order={order} onPay={(payPalOrderId) => payNow(order.orderId, payPalOrderId)} processing={paying} />
           ) : (
             <ProcessingPanel status={order.status} />
           )}
