@@ -55,6 +55,11 @@ class Trip(
     @Column(name = "arrival_time", nullable = false)
     val arrivalTime: OffsetDateTime = OffsetDateTime.MIN,
 
+    // DB-generated journey length (arrival - departure, STORED): read-only here, exists so "Fastest" is a
+    // plain sortable property for paginated reads (a computed expression can't ride Pageable's property paths).
+    @Column(name = "duration_minutes", insertable = false, updatable = false)
+    val durationMinutes: Int = 0,
+
     @Column(name = "price_cents", nullable = false)
     val priceCents: Long = 0,
 

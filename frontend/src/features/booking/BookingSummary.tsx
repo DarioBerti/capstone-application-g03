@@ -16,12 +16,15 @@ const CART_STATUS = new Set<OrderStatus>(['DRAFT', 'HELD'])
 
 // Sidebar cart for the active booking: one card per reserved leg (plus a pending-return placeholder while the
 // booking is still one-way), the total, and the Proceed-to-Checkout action. Renders the empty state until a
-// booking is started (or after the active one leaves the cart-able statuses).
+// booking is started (or after the active one leaves the cart-able statuses). A booking with no active leg has
+// nothing to check out — the backend rejects pay on it — so it reads as the empty cart, never as a
+// checkoutable one.
 export default function BookingSummary() {
   const navigate = useNavigate()
   const sliceOrder = useAppSelector((s) => s.booking.order)
   const { dropLeg, discardBooking, removing } = useBookingActions()
-  const order = sliceOrder && CART_STATUS.has(sliceOrder.status) ? sliceOrder : null
+  const cartOrder = sliceOrder && CART_STATUS.has(sliceOrder.status) ? sliceOrder : null
+  const order = cartOrder?.legs.some((l) => ACTIVE_LEG_STATUSES.has(l.status)) ? cartOrder : null
 
   if (!order) {
     return (
@@ -56,7 +59,6 @@ export default function BookingSummary() {
             removing={removing}
           />
         ))}
-        {activeLegs.length === 0 && <p className="font-body-sm text-body-sm text-on-surface-variant">No active legs.</p>}
         {outboundCode && !hasReturn && <PendingReturnCard outboundCode={outboundCode} />}
       </div>
 

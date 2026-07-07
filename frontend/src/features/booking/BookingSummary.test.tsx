@@ -105,6 +105,17 @@ describe('BookingSummary', () => {
     expect(screen.getByText(/select a journey/i)).toBeInTheDocument()
   })
 
+  // A booking with nothing active has nothing to check out: the CTA must not render at all (the backend
+  // rejects pay/paypal-session on it anyway — the UI must not steer the user into that wall).
+  test('shows the empty cart, without a checkout action, when no leg is active', () => {
+    // Arrange + Act — an empty DRAFT (every leg released)
+    renderSummary(anOrder('DRAFT', 'RELEASED'))
+
+    // Assert
+    expect(screen.queryByRole('button', { name: /proceed to checkout/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/select a journey/i)).toBeInTheDocument()
+  })
+
   test('discarding is a two-step confirm: "Keep" backs out without releasing anything', async () => {
     // Arrange
     let deletes = 0

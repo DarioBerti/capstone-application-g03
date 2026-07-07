@@ -5,6 +5,7 @@ import { isAuthenticated } from '../../auth'
 import { useGetOrderQuery } from '../orders/ordersApi'
 import { bookingRestored } from './bookingSlice'
 import { isTerminal } from './useOrderStream'
+import { ACTIVE_LEG_STATUSES } from './legStatus'
 import { clearBookingPointer, loadBookingPointer } from './bookingStorage'
 
 // Reconnects the in-memory cart to its backend order after a refresh: re-fetch the persisted order by id
@@ -32,7 +33,9 @@ export function useRestoreBooking(): void {
     }
     if (!fetched) return
     done.current = true
-    if (isTerminal(fetched.status)) {
+    // Terminal orders are finished; a booking with no active leg is spent (its released trips can never be
+    // re-reserved on the same order) — neither belongs back in the cart.
+    if (isTerminal(fetched.status) || !fetched.legs.some((l) => ACTIVE_LEG_STATUSES.has(l.status))) {
       clearBookingPointer()
       return
     }

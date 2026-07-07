@@ -122,6 +122,23 @@ describe('useRestoreBooking', () => {
     expect(localStorage.getItem(KEY)).toBeNull()
   })
 
+  // An empty DRAFT is a spent booking (its released trips can never be re-reserved on it): restoring it would
+  // re-arm the cart with a dead order id and a stale Idempotency-Key.
+  test('drops the pointer instead of restoring an empty draft', async () => {
+    // Arrange
+    localStorage.setItem(KEY, JSON.stringify({ orderId: 'o1', idempotencyKey: 'key-1', selectedTripCode: null }))
+    const emptyDraft: Order = { ...anOrder('o1', 'DRAFT'), legs: [{ ...anOrder('o1', 'DRAFT').legs[0], status: 'RELEASED' }] }
+    server.use(http.get('*/api/orders/:orderId', () => HttpResponse.json(emptyDraft)))
+    const store = makeStore()
+
+    // Act
+    renderProbe(store)
+
+    // Assert
+    await waitFor(() => expect(localStorage.getItem(KEY)).toBeNull())
+    expect(store.getState().booking.order).toBeNull()
+  })
+
   test('drops the pointer when the order is gone (404)', async () => {
     // Arrange
     localStorage.setItem(KEY, JSON.stringify({ orderId: 'gone', idempotencyKey: null, selectedTripCode: null }))

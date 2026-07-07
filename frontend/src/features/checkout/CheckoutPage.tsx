@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAppDispatch, useAppSelector } from '../../app/hooks'
 import { orderUpdated } from '../booking/bookingSlice'
 import { ACTIVE_LEG_STATUSES } from '../booking/legStatus'
@@ -8,7 +8,7 @@ import { useBookingActions } from '../booking/useBookingActions'
 import DiscardBooking from '../booking/DiscardBooking'
 import { useGetTripQuery } from '../catalog/catalogApi'
 import { useGetOrderQuery } from '../orders/ordersApi'
-import { ErrorState, LoadingBlock } from '../../components/ui/QueryStates'
+import { EmptyState, ErrorState, LoadingBlock } from '../../components/ui/QueryStates'
 import SagaTracker from './SagaTracker'
 import PaymentForm from './PaymentForm'
 import ProcessingPanel from './ProcessingPanel'
@@ -39,10 +39,12 @@ export default function CheckoutPage() {
   })
   const syncedRef = useRef<Order | null>(null)
   useEffect(() => {
-    if (fetched && syncedRef.current !== fetched) {
-      syncedRef.current = fetched
-      dispatch(orderUpdated(fetched))
-    }
+    if (!fetched || syncedRef.current === fetched) return
+    syncedRef.current = fetched
+    // A draft with nothing active is a spent booking (its released trips can never be re-reserved on it):
+    // render its empty state below, but never fold it back into the cart.
+    if (fetched.status === 'DRAFT' && !fetched.legs.some((l) => ACTIVE_LEG_STATUSES.has(l.status))) return
+    dispatch(orderUpdated(fetched))
   }, [fetched, dispatch])
 
   const order = sliceOrder?.orderId === orderId ? sliceOrder : fetched
@@ -64,6 +66,28 @@ export default function CheckoutPage() {
     return (
       <main className="flex-grow max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop w-full py-xl">
         <ErrorState error={error} onRetry={refetch} />
+      </main>
+    )
+  }
+
+  // Nothing active to check out: an empty DRAFT (every leg removed/expired) is a spent booking — say so and
+  // send the traveller back to the search instead of pretending a payment is in flight.
+  if (order.status === 'DRAFT' && !order.legs.some((l) => ACTIVE_LEG_STATUSES.has(l.status))) {
+    return (
+      <main className="flex-grow max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop w-full py-xl">
+        <EmptyState
+          icon="shopping_basket"
+          title="This booking is empty"
+          hint={
+            <>
+              Every leg has been removed.{' '}
+              <Link to="/search" className="text-primary font-bold hover:underline">
+                Find a train
+              </Link>{' '}
+              to start a new booking.
+            </>
+          }
+        />
       </main>
     )
   }

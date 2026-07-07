@@ -15,15 +15,12 @@ import { todayIso } from '../../lib/format'
 import { ACTIVE_LEG_STATUSES } from '../booking/legStatus'
 import type { Availability, Trip } from '../../types'
 
-function durationMs(t: Trip) {
-  return new Date(t.arrivalTime).getTime() - new Date(t.departureTime).getTime()
-}
-
-// Client-side sort over the current page (the "Fastest" key isn't a sortable DB column).
-function sortTrips(trips: Trip[], key: SortKey): Trip[] {
-  const copy = [...trips]
-  if (key === 'cheapest') return copy.sort((a, b) => a.priceCents - b.priceCents)
-  return copy.sort((a, b) => durationMs(a) - durationMs(b))
+// The active tab sorts SERVER-side so pagination follows the ordering: a client-side sort over one page
+// shows the wrong "cheapest"/"fastest" whenever the true optimum sits on a later page. durationMinutes is
+// the catalog's DB-generated arrival-departure column.
+const SERVER_SORT: Record<SortKey, string> = {
+  cheapest: 'priceCents,asc',
+  fastest: 'durationMinutes,asc',
 }
 
 // Seat badge input, sourced from Catalog's availability read-model on the trip itself (sold-out trips are
@@ -86,10 +83,12 @@ export default function SearchPage() {
   // search. Skip the fetch during the brief window where the outbound trip is still resolving, so we never
   // flash the outbound-direction list.
   const resolvingReturn = awaitingReturn && !outboundTrip
-  const baseQuery: TripQuery =
-    awaitingReturn && outboundTrip
+  const baseQuery: TripQuery = {
+    ...(awaitingReturn && outboundTrip
       ? returnQueryFor(outboundTrip, { date: returnDate })
-      : { origin, destination, serviceDate: outboundDate }
+      : { origin, destination, serviceDate: outboundDate }),
+    sort: SERVER_SORT[sort],
+  }
   // The page index is bound to the search it was set for: a different search (route, day, or
   // outbound↔return flip) reads as page 0 without an effect, so the stale page never even fetches.
   const queryKey = JSON.stringify(baseQuery)
@@ -130,9 +129,8 @@ export default function SearchPage() {
     }
   }
 
-  // Sold-out trips are filtered out server-side by Catalog's availability read-model, so here we only sort
-  // the current page.
-  const trips = useMemo(() => sortTrips(page?.content ?? [], sort), [page, sort])
+  // Server-ordered by the active tab (and sold-out trips already filtered out server-side) — render as-is.
+  const trips = page?.content ?? []
   // The URL params carry station CODES; resolve them to display names off the cached station list
   // (falling back to the raw code only for the brief first load).
   const { data: allStations = [] } = useListAllStationsQuery()

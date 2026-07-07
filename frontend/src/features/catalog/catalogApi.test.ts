@@ -35,8 +35,12 @@ const topDestinations: DestinationSummary[] = [
 ]
 
 let lastDestinationsUrl: URL | null = null
+let lastTripsUrl: URL | null = null
 const server = setupServer(
-  http.get('*/api/catalog/trips', () => HttpResponse.json(tripPage)),
+  http.get('*/api/catalog/trips', ({ request }) => {
+    lastTripsUrl = new URL(request.url)
+    return HttpResponse.json(tripPage)
+  }),
   http.get('*/api/catalog/stations/all', () => HttpResponse.json(allStations)),
   http.get('*/api/catalog/destinations/top', ({ request }) => {
     lastDestinationsUrl = new URL(request.url)
@@ -60,6 +64,15 @@ describe('catalogApi', () => {
     const result = await store.dispatch(catalogApi.endpoints.listTrips.initiate({})).unwrap()
     expect(result.content).toHaveLength(1)
     expect(result.content[0].carrierCode).toBe('Eurostar')
+  })
+
+  // The Cheapest/Fastest tabs rely on SERVER-side ordering so pagination follows the sort — the param must
+  // reach the wire.
+  test('listTrips forwards the sort and size params', async () => {
+    const store = makeStore()
+    await store.dispatch(catalogApi.endpoints.listTrips.initiate({ sort: 'priceCents,asc', size: 1 })).unwrap()
+    expect(lastTripsUrl?.searchParams.get('sort')).toBe('priceCents,asc')
+    expect(lastTripsUrl?.searchParams.get('size')).toBe('1')
   })
 
   test('listAllStations returns the full station array', async () => {
