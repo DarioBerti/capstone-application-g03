@@ -75,9 +75,10 @@ const roundTripOrder: Order = {
   expiresAt: null,
   remainingSeconds: null,
   paymentInitiatedAt: null,
+  // Deliberately RETURN-first to prove the card sorts outbound-first regardless of API array order.
   legs: [
-    { legId: 'l1', direction: 'OUTBOUND', tripCode: 'FR9935-20250916', qty: 1, unitPriceCents: 2510, lineAmountCents: 2510, status: 'CONFIRMED' },
     { legId: 'l2', direction: 'RETURN', tripCode: 'FR9908-20250918', qty: 1, unitPriceCents: 2510, lineAmountCents: 2510, status: 'CONFIRMED' },
+    { legId: 'l1', direction: 'OUTBOUND', tripCode: 'FR9935-20250916', qty: 1, unitPriceCents: 2510, lineAmountCents: 2510, status: 'CONFIRMED' },
   ],
 }
 
@@ -108,9 +109,12 @@ describe('MyBookingsPage', () => {
     // round-trip header + leg rows resolve the trip codes to station names (await the async catalog reads)
     expect((await screen.findAllByText('Torino Porta Susa')).length).toBeGreaterThan(0)
     expect(screen.getAllByText('Milano Centrale').length).toBeGreaterThan(0)
-    // both legs rendered with their directions and total
-    expect(screen.getByText('OUTBOUND')).toBeInTheDocument()
-    expect(screen.getByText('RETURN')).toBeInTheDocument()
+    // both legs rendered, outbound-first even though the API returned them return-first
+    const outbound = screen.getByText('OUTBOUND')
+    const ret = screen.getByText('RETURN')
+    expect(outbound).toBeInTheDocument()
+    expect(ret).toBeInTheDocument()
+    expect(outbound.compareDocumentPosition(ret) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByRole('link', { name: /view trip/i })).toHaveAttribute(
       'href',
       '/orders/abcd1234-5678-90ab-cdef-000000000000',

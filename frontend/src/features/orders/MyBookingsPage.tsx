@@ -118,8 +118,15 @@ export default function MyBookingsPage() {
   )
 }
 
+const LEG_ORDER: Record<OrderLeg['direction'], number> = { OUTBOUND: 0, RETURN: 1 }
+
 function BookingCard({ order }: { order: Order }) {
-  const legs = order.legs.filter((l) => l.status !== 'RELEASED')
+  // Outbound always before return. The backend now orders legs by createdAt, but sorting here keeps the display
+  // deterministic regardless of the array order the API happens to return.
+  const legs = order.legs
+    .filter((l) => l.status !== 'RELEASED')
+    .slice()
+    .sort((a, b) => LEG_ORDER[a.direction] - LEG_ORDER[b.direction])
   const outbound = legs.find((l) => l.direction === 'OUTBOUND') ?? legs[0]
   const hasReturn = legs.some((l) => l.direction === 'RETURN')
   const bookingCode = `ET-${order.orderId.slice(0, 8).toUpperCase()}`
