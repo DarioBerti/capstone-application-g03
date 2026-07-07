@@ -93,4 +93,15 @@ describe('CheckoutPage payment gating', () => {
     expect(await screen.findByText(/payment details/i)).toBeInTheDocument()
     await waitFor(() => expect(sessionRequested).toBe(true))
   })
+
+  // An empty DRAFT has nothing to check out: the page must say so and send the user back to search — never
+  // the "securing your seats and completing payment" processing copy, which is false for a spent booking.
+  test('an empty draft renders the empty-booking state, not the processing panel', async () => {
+    const emptyDraft: Order = { ...heldOrder('RESERVED'), status: 'DRAFT', legs: [], expiresAt: null, remainingSeconds: null }
+    renderCheckout(emptyDraft)
+
+    expect(await screen.findByText(/booking is empty/i)).toBeInTheDocument()
+    expect(screen.queryByText(/completing payment/i)).not.toBeInTheDocument()
+    expect(sessionRequested).toBe(false)
+  })
 })

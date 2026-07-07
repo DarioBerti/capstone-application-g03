@@ -140,6 +140,16 @@ class OrdersControllerTest {
         ).andExpect(status().isConflict)
     }
 
+    // Backend guard for the empty-cart checkout: an order with nothing to pay can never open a payment
+    // session — a DRAFT (no held legs) is rejected outright, mirroring the pay guard above.
+    @Test
+    fun `opening a payment session on an empty draft is rejected with 409`() {
+        val id = draftId()
+        mockMvc.perform(post("/api/orders/$id/paypal-session").with(jwt().jwt { it.subject(sub) }))
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.error").value(containsString("cannot open a payment session")))
+    }
+
     // Buyer-scoping (IDOR guard): a buyer cannot read another buyer's order — it reads as 404, not leaking existence.
     @Test
     fun `GET another buyer's order is rejected with 404`() {
