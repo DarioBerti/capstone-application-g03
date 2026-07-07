@@ -25,7 +25,12 @@ class PaymentCommandListeners(
     @KafkaListener(topics = [Topics.AUTHORIZE_PAYMENT], autoStartup = "\${app.kafka-listeners-enabled:true}")
     fun onAuthorizePayment(payload: String) {
         val command = objectMapper.readValue(payload, AuthorizePaymentCommand::class.java)
-        service.authorize(command.orderId, command.amountCents, command.items.map { LineItem(it.name, it.quantity, it.unitAmountCents) })
+        service.authorize(
+            command.orderId,
+            command.amountCents,
+            command.items.map { LineItem(it.name, it.quantity, it.unitAmountCents) },
+            command.payPalOrderId,
+        )
     }
 
     @KafkaListener(topics = [Topics.CAPTURE_PAYMENT], autoStartup = "\${app.kafka-listeners-enabled:true}")

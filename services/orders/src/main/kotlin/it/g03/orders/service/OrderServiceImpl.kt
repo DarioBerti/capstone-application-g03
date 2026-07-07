@@ -5,11 +5,14 @@ import it.g03.orders.entities.LegStatus
 import it.g03.orders.entities.Order
 import it.g03.orders.entities.OrderLeg
 import it.g03.orders.entities.OrderStatus
+import it.g03.orders.dto.PayPalSessionResponse
 import it.g03.orders.events.AuthorizePaymentCommand
 import it.g03.orders.events.ReleaseSeatsCommand
 import it.g03.orders.events.ReserveSeatsCommand
 import it.g03.orders.events.Topics
 import it.g03.orders.events.toPaymentLineItem
+import it.g03.orders.gateway.PaymentLineItemDto
+import it.g03.orders.gateway.PaymentsGateway
 import it.g03.orders.repository.OrderLegRepository
 import it.g03.orders.repository.OrderRepository
 import io.micrometer.core.instrument.MeterRegistry
@@ -43,6 +46,8 @@ class OrderServiceImpl(
     // Verifies the browse-time price quote the client carries into add-leg, so the leg is priced from a
     // tamper-proof snapshot WITHOUT any synchronous Catalog call on the money path (see PriceQuoteVerifier)
     private val priceQuoteVerifier: PriceQuoteVerifier,
+    // Sync seam to Payments for opening a PayPal Card-Fields session (the only synchronous money-path call).
+    private val paymentsGateway: PaymentsGateway,
     // Backend-owned checkout hold window: how long the user has to pay after the first leg is added
     @Value("\${app.checkout.window}") private val checkoutWindow: Duration,
 ) : OrderService {
@@ -128,7 +133,7 @@ class OrderServiceImpl(
     }
 
     @Transactional
-    override fun pay(orderId: UUID, buyerSub: String): OrderView {
+    override fun pay(orderId: UUID, buyerSub: String, payPalOrderId: String?): OrderView {
         val order = loadOwned(orderId, buyerSub)
         // Idempotent repeat: once paying/paid, replay the current view instead of re-authorizing.
         when (order.status) {
@@ -155,13 +160,36 @@ class OrderServiceImpl(
         val amount = reserved.sumOf { it.qty * it.unitPriceCents }
         order.amountCents = amount
         order.paymentInitiatedAt = Instant.now()
+        order.payPalOrderId = payPalOrderId
         order.status = OrderStatus.PAYING
         touch(order)
         val items = reserved.map { it.toPaymentLineItem() }
-        outbox.append(Topics.AUTHORIZE_PAYMENT, order.id.toString(), AuthorizePaymentCommand(order.id.toString(), amount, items))
+        outbox.append(
+            Topics.AUTHORIZE_PAYMENT,
+            order.id.toString(),
+            AuthorizePaymentCommand(order.id.toString(), amount, items, payPalOrderId),
+        )
         meterRegistry.counter("orders_pay_initiated_total").increment()
         log.info("order {} pay initiated — authorize-payment {} emitted ({} leg(s))", orderId, amount, reserved.size)
         return view(order)
+    }
+
+    // Open a PayPal Card-Fields session for a booking about to be paid. Reads the reserved legs to describe the
+    // order (same amount/items pay will authorize), then relays the buyer's token to Payments to create the
+    // card-less PayPal order + client token. Read-only here — the session is the browser's precursor to pay; the
+    // approved order id comes back on POST /pay. Left outside a write transaction (it's a remote call).
+    override fun createPayPalSession(orderId: UUID, buyerSub: String, bearerToken: String): PayPalSessionResponse {
+        val order = loadOwned(orderId, buyerSub)
+        if (order.status != OrderStatus.HELD) {
+            throw BookingNotPayableException("order $orderId is ${order.status}, cannot open a payment session")
+        }
+        val reserved = legs.findByOrderId(orderId).filter { it.status == LegStatus.RESERVED }
+        if (reserved.none { it.direction == LegDirection.OUTBOUND }) {
+            throw BookingNotPayableException("no reserved outbound leg to pay for on order $orderId")
+        }
+        val amount = reserved.sumOf { it.qty * it.unitPriceCents }
+        val items = reserved.map { PaymentLineItemDto("${it.direction} ${it.tripCode}", it.qty, it.unitPriceCents) }
+        return paymentsGateway.createPayPalSession(order.id.toString(), amount, order.currency, items, bearerToken)
     }
 
     @Transactional(readOnly = true)

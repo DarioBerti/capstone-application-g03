@@ -29,6 +29,21 @@ data class AddLegRequest(
     @field:NotBlank val priceToken: String,
 )
 
+// Body of POST /{id}/pay. Card-Fields checkout sends the PayPal order the browser approved; the legacy/mock
+// one-click pay sends nothing (the whole body is optional).
+data class PayRequest(
+    val payPalOrderId: String? = null,
+)
+
+// Response of POST /{id}/paypal-session: what the browser needs to render PayPal Card Fields. No secret or card
+// data — the client-id is public, the client token is a short-lived SDK credential, and the order id is approved
+// client-side. Mirrors the payments PayPalSessionResponse (Orders keeps its own copy at the boundary).
+data class PayPalSessionResponse(
+    val clientId: String,
+    val clientToken: String,
+    val payPalOrderId: String,
+)
+
 // One leg of the booking in the API response.
 data class OrderLegResponse(
     val legId: UUID,

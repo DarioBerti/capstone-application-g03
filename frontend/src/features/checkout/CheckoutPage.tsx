@@ -19,8 +19,10 @@ import RejectedView from './RejectedView'
 import type { OrderLeg } from '../../types'
 
 // Orchestrates the checkout: hydrate the order (from the booking slice, or fetch it on a deep-link/refresh),
-// observe the saga live over SSE (degrading to polling), and branch on status. While the hold is open the user
-// can Change a leg (drop it → back to /search to re-pick) or discard the whole booking; once paid it's read-only.
+// observe the saga live over SSE (degrading to polling), and branch on status. Payment is PayPal Card Fields —
+// the card is entered in PayPal's iframe; the browser only ever forwards the approved order id to `pay`. While
+// the hold is open the user can Change a leg (drop it → back to /search to re-pick) or discard the whole
+// booking; once paid it's read-only.
 export default function CheckoutPage() {
   const { orderId = '' } = useParams()
   const dispatch = useAppDispatch()
@@ -103,7 +105,7 @@ export default function CheckoutPage() {
         <section className="col-span-12 lg:col-span-6">
           {payable ? (
             <div className="flex flex-col gap-md">
-              <PaymentForm order={order} onPay={() => payNow(order.orderId)} processing={paying} />
+              <PaymentForm order={order} onPay={(payPalOrderId) => payNow(order.orderId, payPalOrderId)} processing={paying} />
               <DiscardBooking
                 onConfirm={async () => {
                   await discardBooking(order)

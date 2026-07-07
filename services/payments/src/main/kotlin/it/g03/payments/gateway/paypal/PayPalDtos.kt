@@ -14,7 +14,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
 data class CreateOrderRequest(
     val intent: String,
     @JsonProperty("purchase_units") val purchaseUnits: List<PurchaseUnit>,
-    @JsonProperty("payment_source") val paymentSource: PaymentSource,
+    // Server-to-server card flow sends a card here; the Card-Fields session creates the order WITHOUT a card
+    // (the browser attaches the card to this order id via the SDK), so it stays null then.
+    @JsonProperty("payment_source") val paymentSource: PaymentSource? = null,
 )
 
 data class PurchaseUnit(
@@ -77,6 +79,13 @@ data class CaptureResponse(val id: String?, val status: String?)
 data class TokenResponse(
     @JsonProperty("access_token") val accessToken: String,
     @JsonProperty("expires_in") val expiresIn: Long,
+)
+
+// --- client token for the browser SDK (POST /v1/identity/generate-token) ------------------------------------
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class GenerateClientTokenResponse(
+    @JsonProperty("client_token") val clientToken: String,
 )
 
 // --- error / decline body (422 carries details[].issue) -----------------------------------------------------

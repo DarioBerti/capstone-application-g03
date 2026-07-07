@@ -26,6 +26,9 @@ data class AuthorizePaymentCommand(
     val orderId: String,
     val amountCents: Long,
     val items: List<PaymentLineItem> = emptyList(),
+    // The PayPal order the browser created + approved (Card Fields); payments authorizes it instead of using a
+    // server-side card. Null for the mock/legacy path. Sourced from the persisted order so a re-drive re-sends it.
+    val payPalOrderId: String? = null,
     val eventId: UUID = UUID.randomUUID(),
     val occurredAt: Instant = Instant.now(),
 )

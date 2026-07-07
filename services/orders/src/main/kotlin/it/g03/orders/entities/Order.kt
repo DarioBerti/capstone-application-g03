@@ -77,6 +77,12 @@ class Order(
     @Column(name = "payment_initiated_at")
     var paymentInitiatedAt: Instant? = null,
 
+    // The PayPal order the browser created + approved via Card Fields at pay. Persisted so a timeout-sweeper
+    // re-drive of authorize-payment re-sends the SAME id (the async authorize acts on this approved order).
+    // Null for the mock/legacy server-side-card path.
+    @Column(name = "paypal_order_id", length = 64)
+    var payPalOrderId: String? = null,
+
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
 

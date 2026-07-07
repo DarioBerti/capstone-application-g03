@@ -1,5 +1,6 @@
 package it.g03.orders.service
 
+import it.g03.orders.dto.PayPalSessionResponse
 import it.g03.orders.entities.LegDirection
 import it.g03.orders.entities.Order
 import it.g03.orders.entities.OrderLeg
@@ -31,8 +32,18 @@ interface OrderService {
     /** Remove a leg (releasing its hold); if no active leg remains the order reverts to DRAFT and the window clears. */
     fun removeLeg(orderId: UUID, buyerSub: String, legId: UUID): OrderView
 
-    /** Pay for the booking — backend re-checks the window, then authorizes the summed amount over the reserved legs. */
-    fun pay(orderId: UUID, buyerSub: String): OrderView
+    /**
+     * Pay for the booking — backend re-checks the window, then authorizes the summed amount over the reserved
+     * legs. [payPalOrderId], when present, is the PayPal order the browser created + approved via Card Fields;
+     * it is persisted and carried on authorize-payment so the async saga authorizes THAT order.
+     */
+    fun pay(orderId: UUID, buyerSub: String, payPalOrderId: String? = null): OrderView
+
+    /**
+     * Open a PayPal Card-Fields session for a booking about to be paid: relays the buyer's token to Payments,
+     * which creates a card-less PayPal order for the reserved legs and returns what the browser SDK needs.
+     */
+    fun createPayPalSession(orderId: UUID, buyerSub: String, bearerToken: String): PayPalSessionResponse
 
     /** Read side: the order plus its legs. Buyer-scoped — a foreign order reads as not-found (no existence leak). */
     fun get(orderId: UUID, buyerSub: String): OrderView

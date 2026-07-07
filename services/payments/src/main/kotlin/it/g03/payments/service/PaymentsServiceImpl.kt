@@ -50,7 +50,7 @@ class PaymentsServiceImpl(
      * re-emitting on redelivery is the at-least-once recovery mechanism — Orders' handler is idempotent.
      */
     @Transactional   // run the whole method in a single database transaction (all-or-nothing)
-    override fun authorize(orderId: String, amountCents: Long, items: List<LineItem>): AuthorizeOutcome {
+    override fun authorize(orderId: String, amountCents: Long, items: List<LineItem>, payPalOrderId: String?): AuthorizeOutcome {
         require(amountCents > 0) { "amountCents must be positive" }
 
         authorizations.findByOrderId(orderId)?.let {
@@ -74,7 +74,7 @@ class PaymentsServiceImpl(
         // business outcome; a transient transport failure throws (TransientPspException) so this transaction
         // rolls back and the Kafka retry/DLT/sweeper path re-drives.
         val auth = PaymentAuthorization(orderId = orderId, amountCents = amountCents)
-        when (val result = gateway.authorize(orderId, amountCents, auth.currency, items)) {
+        when (val result = gateway.authorize(orderId, amountCents, auth.currency, items, payPalOrderId)) {
             is AuthorizationResult.Authorized -> {
                 auth.status = AuthorizationStatus.AUTHORIZED
                 auth.pspReference = result.pspReference

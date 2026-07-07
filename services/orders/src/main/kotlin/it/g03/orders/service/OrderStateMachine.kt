@@ -151,7 +151,11 @@ class OrderStateMachine(
         when (current.status) {
             OrderStatus.PAYING -> {
                 val items = legs.findByOrderId(current.id).filter { it.status == LegStatus.RESERVED }.map { it.toPaymentLineItem() }
-                outbox.append(Topics.AUTHORIZE_PAYMENT, current.idStr(), AuthorizePaymentCommand(current.idStr(), current.amountCents, items))
+                outbox.append(
+                    Topics.AUTHORIZE_PAYMENT,
+                    current.idStr(),
+                    AuthorizePaymentCommand(current.idStr(), current.amountCents, items, current.payPalOrderId),
+                )
             }
             OrderStatus.AUTHORIZED -> {
                 val reserved = legs.findByOrderId(current.id).filter { it.status == LegStatus.RESERVED }

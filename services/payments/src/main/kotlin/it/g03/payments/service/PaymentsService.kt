@@ -18,7 +18,7 @@ data class CancelOutcome(val authorization: PaymentAuthorization, val replayed: 
  * [PaymentsServiceImpl] is the single implementation.
  */
 interface PaymentsService {
-    fun authorize(orderId: String, amountCents: Long, items: List<LineItem> = emptyList()): AuthorizeOutcome
+    fun authorize(orderId: String, amountCents: Long, items: List<LineItem> = emptyList(), payPalOrderId: String? = null): AuthorizeOutcome
     fun capture(orderId: String): CaptureOutcome
     fun cancelAuthorization(orderId: String): CancelOutcome
     fun find(orderId: String): PaymentAuthorization

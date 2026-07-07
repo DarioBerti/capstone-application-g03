@@ -10,7 +10,18 @@ package it.g03.payments.gateway
  * path re-drives; [PspException] for terminal ones.
  */
 interface PaymentGateway {
-    fun authorize(orderId: String, amountCents: Long, currency: String, items: List<LineItem> = emptyList()): AuthorizationResult
+    /**
+     * Place a HOLD. [payPalOrderId], when present, is a PayPal order the browser already created + approved via
+     * Card Fields — the gateway authorizes THAT order instead of creating one from card data it holds. Null keeps
+     * the legacy server-to-server card path (and is what the mock always sees).
+     */
+    fun authorize(
+        orderId: String,
+        amountCents: Long,
+        currency: String,
+        items: List<LineItem> = emptyList(),
+        payPalOrderId: String? = null,
+    ): AuthorizationResult
     fun capture(orderId: String, pspReference: String): CaptureResult
     fun void(orderId: String, pspReference: String)
 }
