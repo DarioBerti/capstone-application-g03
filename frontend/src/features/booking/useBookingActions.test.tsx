@@ -77,9 +77,12 @@ describe('useBookingActions.changeLeg', () => {
       await result.current.changeLeg(roundTrip, leg('o1-out', 'OUTBOUND'))
     })
 
-    // Assert — return released before the outbound, order emptied to DRAFT in the slice
+    // Assert — return released before the outbound; the emptied booking is spent (its released trips can't be
+    // re-reserved on the same order), so the cart resets for a fresh order instead of keeping the dead DRAFT.
     expect(deleted).toEqual(['o1-ret', 'o1-out'])
-    expect(store.getState().booking.order?.status).toBe('DRAFT')
+    expect(store.getState().booking.order).toBeNull()
+    expect(store.getState().booking.idempotencyKey).toBeNull()
+    expect(store.getState().booking.selectedTripCode).toBeNull()
   })
 
   test('changing the return drops only the return, keeping the outbound', async () => {

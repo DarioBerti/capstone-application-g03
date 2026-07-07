@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useRef } from 'react'
 import { skipToken } from '@reduxjs/toolkit/query/react'
 import { useAppDispatch, useAppSelector } from '../../app/hooks'
 import { isAuthenticated } from '../../auth'
@@ -10,31 +10,41 @@ import { clearBookingPointer, loadBookingPointer } from './bookingStorage'
 // Reconnects the in-memory cart to its backend order after a refresh: re-fetch the persisted order by id
 // (backend stays authoritative), then restore the slice. Mounted app-wide in Layout. A gone (404) or terminal
 // order drops the pointer instead of restoring. Shares RTK Query's cache with CheckoutPage when ids match.
+//
+// The pointer is re-read from localStorage on every evaluation and the restore runs at most once per page
+// load: a discard clears both the slice and the pointer, and a frozen snapshot would otherwise resurrect the
+// discarded booking (old order id + old Idempotency-Key) the moment the cart empties.
 export function useRestoreBooking(): void {
   const dispatch = useAppDispatch()
   const sliceOrder = useAppSelector((s) => s.booking.order)
-  const pointer = useMemo(() => loadBookingPointer(), [])
+  const done = useRef(false)
 
-  const shouldRestore = isAuthenticated() && !!pointer?.orderId && !sliceOrder
+  const pointer = loadBookingPointer()
+  const shouldRestore = !done.current && isAuthenticated() && !!pointer?.orderId && !sliceOrder
   const { data: fetched, isError } = useGetOrderQuery(shouldRestore ? pointer!.orderId : skipToken)
 
   useEffect(() => {
-    if (!shouldRestore || !pointer) return
+    if (!shouldRestore) return
     if (isError) {
+      done.current = true
       clearBookingPointer()
       return
     }
     if (!fetched) return
+    done.current = true
     if (isTerminal(fetched.status)) {
       clearBookingPointer()
       return
     }
+    // Re-read at restore time: a discard that raced the fetch has already dropped the pointer by now.
+    const current = loadBookingPointer()
+    if (current?.orderId !== fetched.orderId) return
     dispatch(
       bookingRestored({
         order: fetched,
-        idempotencyKey: pointer.idempotencyKey,
-        selectedTripCode: pointer.selectedTripCode,
+        idempotencyKey: current.idempotencyKey,
+        selectedTripCode: current.selectedTripCode,
       }),
     )
-  }, [shouldRestore, pointer, fetched, isError, dispatch])
+  }, [shouldRestore, fetched, isError, dispatch])
 }
