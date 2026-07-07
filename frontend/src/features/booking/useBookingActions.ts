@@ -9,7 +9,7 @@ import {
   usePayMutation,
   useRemoveLegMutation,
 } from '../orders/ordersApi'
-import type { Order } from '../../types'
+import type { Order, OrderLeg } from '../../types'
 
 // Encapsulates the money-path mutations with the client-owned idempotency rule: one stable Idempotency-Key
 // per checkout intent (an outbound trip + qty), reused across retries, re-minted only when the intent changes
@@ -63,6 +63,24 @@ export function useBookingActions() {
     [dispatch, removeLeg],
   )
 
+  // Re-pick a leg from checkout: release it so the seats free immediately, then the caller sends the user back
+  // to /search to choose a replacement. A RETURN is chosen relative to its OUTBOUND, so changing the outbound
+  // invalidates the return too — drop it first, leaving an empty DRAFT the search flow restarts cleanly from.
+  const changeLeg = useCallback(
+    async (orderToEdit: Order, leg: OrderLeg): Promise<void> => {
+      if (leg.direction === 'OUTBOUND') {
+        const returnLeg = orderToEdit.legs.find(
+          (l) => l.direction === 'RETURN' && ACTIVE_LEG_STATUSES.has(l.status),
+        )
+        if (returnLeg) {
+          dispatch(orderUpdated(await removeLeg({ orderId: orderToEdit.orderId, legId: returnLeg.legId }).unwrap()))
+        }
+      }
+      dispatch(orderUpdated(await removeLeg({ orderId: orderToEdit.orderId, legId: leg.legId }).unwrap()))
+    },
+    [dispatch, removeLeg],
+  )
+
   // Discard the whole booking: release every still-held leg on the backend (so the seats free immediately
   // rather than at hold-window expiry), then clear the local cart. Each removal is mirrored into the slice
   // before the next, so if one fails mid-way the cart reflects what's actually released and a retried discard
@@ -96,6 +114,7 @@ export function useBookingActions() {
     startBooking,
     addReturn,
     dropLeg,
+    changeLeg,
     discardBooking,
     payNow,
     reset,

@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, expect, test, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import TripSummary from './TripSummary'
 import type { Order, OrderLeg } from '../../types'
@@ -57,5 +57,36 @@ describe('TripSummary', () => {
     expect(screen.getByText('Outbound')).toBeInTheDocument()
     expect(screen.getByText('Return')).toBeInTheDocument()
     expect(screen.getByText(/32\.00/)).toBeInTheDocument()
+  })
+
+  test('offers a Change action per leg on a HELD order and reports the picked leg', () => {
+    // Arrange
+    const onChangeLeg = vi.fn()
+    render(
+      <MemoryRouter>
+        <TripSummary order={anOrder('HELD', [aLeg('OUTBOUND'), aLeg('RETURN')])} onChangeLeg={onChangeLeg} />
+      </MemoryRouter>,
+    )
+
+    // Act — change the return leg
+    fireEvent.click(screen.getByRole('button', { name: /change return trip/i }))
+
+    // Assert
+    expect(screen.getByRole('button', { name: /change outbound trip/i })).toBeInTheDocument()
+    expect(onChangeLeg).toHaveBeenCalledWith(expect.objectContaining({ direction: 'RETURN' }))
+  })
+
+  test('does not offer Change once the order is past the hold (not HELD)', () => {
+    render(
+      <MemoryRouter>
+        <TripSummary order={anOrder('PAYING', [aLeg('OUTBOUND')])} onChangeLeg={vi.fn()} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByRole('button', { name: /change outbound trip/i })).not.toBeInTheDocument()
+  })
+
+  test('does not offer Change when no handler is supplied (read-only summary)', () => {
+    renderSummary(anOrder('HELD', [aLeg('OUTBOUND')]))
+    expect(screen.queryByRole('button', { name: /change outbound trip/i })).not.toBeInTheDocument()
   })
 })

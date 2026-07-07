@@ -52,17 +52,20 @@ export const ordersApi = apiSlice.injectEndpoints({
       }),
       invalidatesTags: ['Order'],
     }),
+    // Invalidate both the per-order tag (getOrder) AND the general 'Order' tag that listMyOrders provides, so
+    // the CartIndicator's HELD list refetches the instant a leg add/remove flips the booking's held state —
+    // without the general tag it would stay stale until the 30s poll or a full remount.
     addLeg: build.mutation<Order, AddLegArgs>({
       query: ({ orderId, direction, tripCode, qty, priceToken }) => ({
         url: `/orders/${orderId}/legs`,
         method: 'POST',
         data: { direction, tripCode, qty, priceToken },
       }),
-      invalidatesTags: (_r, _e, { orderId }) => [{ type: 'Order', id: orderId }],
+      invalidatesTags: (_r, _e, { orderId }) => [{ type: 'Order', id: orderId }, 'Order'],
     }),
     removeLeg: build.mutation<Order, { orderId: string; legId: string }>({
       query: ({ orderId, legId }) => ({ url: `/orders/${orderId}/legs/${legId}`, method: 'DELETE' }),
-      invalidatesTags: (_r, _e, { orderId }) => [{ type: 'Order', id: orderId }],
+      invalidatesTags: (_r, _e, { orderId }) => [{ type: 'Order', id: orderId }, 'Order'],
     }),
     // Pay within the window (202 Accepted). The saga then proceeds async; observe it over SSE / poll. The body
     // carries the PayPal order the browser approved via Card Fields (absent for the legacy one-click path). The

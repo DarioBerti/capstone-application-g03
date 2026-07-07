@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import Spinner from '../../components/ui/Spinner'
 import HoldWindowCountdown from './HoldWindowCountdown'
+import DiscardBooking from './DiscardBooking'
 import { useBookingActions } from './useBookingActions'
 import { ACTIVE_LEG_STATUSES } from './legStatus'
 import { useAppSelector } from '../../app/hooks'
@@ -21,12 +21,7 @@ export default function BookingSummary() {
   const navigate = useNavigate()
   const sliceOrder = useAppSelector((s) => s.booking.order)
   const { dropLeg, discardBooking, removing } = useBookingActions()
-  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   const order = sliceOrder && CART_STATUS.has(sliceOrder.status) ? sliceOrder : null
-
-  // Never carry an armed discard confirm across bookings: reset it whenever the active order changes
-  // (a fresh booking, or the cart emptying) so a new cart never opens mid-confirm.
-  useEffect(() => setConfirmingDiscard(false), [order?.orderId])
 
   if (!order) {
     return (
@@ -83,68 +78,13 @@ export default function BookingSummary() {
       </button>
 
       <DiscardBooking
-        confirming={confirmingDiscard}
+        onConfirm={() => discardBooking(order)}
         removing={removing}
-        onStart={() => setConfirmingDiscard(true)}
-        onCancel={() => setConfirmingDiscard(false)}
-        onConfirm={async () => {
-          await discardBooking(order)
-          setConfirmingDiscard(false)
-        }}
+        resetKey={order.orderId}
+        className="mt-md"
       />
 
       <HoldWindowCountdown expiresAt={order.expiresAt} remainingSeconds={order.remainingSeconds} />
-    </div>
-  )
-}
-
-// Whole-booking discard: a quiet text button that expands to an inline two-step confirm (no modal, KISS)
-// so releasing a live hold can't happen on a single stray tap. The confirm action drops every held leg.
-function DiscardBooking({
-  confirming,
-  removing,
-  onStart,
-  onCancel,
-  onConfirm,
-}: {
-  confirming: boolean
-  removing: boolean
-  onStart: () => void
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  if (!confirming) {
-    return (
-      <button
-        onClick={onStart}
-        className="w-full mt-md py-sm font-body-sm text-body-sm text-on-surface-variant hover:text-error transition-colors flex items-center justify-center gap-xs"
-      >
-        <Icon name="delete" className="text-base" />
-        Discard booking
-      </button>
-    )
-  }
-  return (
-    <div className="mt-md rounded-lg border border-error/30 bg-error/5 p-md">
-      <p className="font-body-sm text-body-sm text-on-surface text-center mb-sm">
-        Discard this booking and release the held seats?
-      </p>
-      <div className="flex gap-sm">
-        <button
-          onClick={onCancel}
-          disabled={removing}
-          className="flex-1 py-sm rounded-lg bg-surface-container text-on-surface font-bold hover:bg-surface-container-high transition-colors disabled:opacity-50"
-        >
-          Keep
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={removing}
-          className="flex-1 py-sm rounded-lg bg-error text-on-error font-bold hover:brightness-110 transition-all disabled:opacity-50 flex items-center justify-center gap-xs"
-        >
-          {removing ? <Spinner className="text-sm" /> : 'Discard'}
-        </button>
-      </div>
     </div>
   )
 }
