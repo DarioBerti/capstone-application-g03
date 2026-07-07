@@ -6,21 +6,19 @@ import { useListTripsQuery } from '../catalog/catalogApi'
 const VISIBLE_DAYS = 9
 // Keep the selected day centred in the window without ever paging before the earliest allowed day.
 const CENTER_OFFSET = 4
-// The services' max page size — large enough to always catch a day's cheapest fare on this catalog.
-const DAY_PRICE_PAGE_SIZE = 100
 
 export interface DayPriceQuery {
   origin?: string
   destination?: string
 }
 
-// Cheapest fare for one day of the strip's route, read from the same cached public trips endpoint the
-// results list uses. Renders nothing while loading or when the day has no trips.
+// Cheapest fare for one day of the strip's route: the server orders by price, so one row is enough (same
+// cached public trips endpoint the results list uses). Renders nothing while loading or on an empty day.
 function DayPrice({ query, day, selected }: { query: DayPriceQuery; day: string; selected: boolean }) {
-  const { data } = useListTripsQuery({ ...query, serviceDate: day, size: DAY_PRICE_PAGE_SIZE })
+  const { data } = useListTripsQuery({ ...query, serviceDate: day, size: 1, sort: 'priceCents,asc' })
   const trips = data?.content ?? []
   if (trips.length === 0) return null
-  const cheapest = trips.reduce((min, t) => Math.min(min, t.priceCents), Number.POSITIVE_INFINITY)
+  const cheapest = trips[0].priceCents
   return (
     <span className="mt-xs flex flex-col items-center">
       <span className={`font-body-sm text-body-sm leading-tight ${selected ? 'opacity-80' : 'text-outline'}`}>

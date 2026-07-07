@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.data.domain.PageRequest
+import org.springframework.data.domain.Sort
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -56,6 +57,29 @@ class CatalogControllerTest {
         assertEquals(1, page.totalElements.toInt())
         assertEquals("FR0001-20260629", page.content.single().code)
         assertEquals(1500, controller.tripByCode("FR0001-20260629").priceCents)
+    }
+
+    // The storefront's Cheapest/Fastest tabs sort SERVER-side so pagination follows the active ordering (a
+    // client-side sort over one page shows the wrong "cheapest" when the true minimum sits on a later page).
+    // priceCents is a plain column; durationMinutes is the DB-generated arrival-departure column.
+    @Test
+    fun `sorts trips by price and by duration server-side`() {
+        // FR0002: cheaper (1200 < 1500) but slower (90m vs FR0001's 60m) — the two orderings must differ.
+        trips.save(
+            Trip(
+                code = "FR0002-20260629", carrierCode = "FR", serviceNumber = "0002",
+                serviceDate = LocalDate.of(2026, 6, 29), originCode = "TRN", destinationCode = "MIL",
+                departureTime = OffsetDateTime.of(2026, 6, 29, 7, 0, 0, 0, ZoneOffset.ofHours(2)),
+                arrivalTime = OffsetDateTime.of(2026, 6, 29, 8, 30, 0, 0, ZoneOffset.ofHours(2)),
+                priceCents = 1200,
+            ),
+        )
+
+        val byPrice = controller.listTrips(TripFilter(), PageRequest.of(0, 20, Sort.by("priceCents")))
+        assertEquals(listOf("FR0002-20260629", "FR0001-20260629"), byPrice.content.map { it.code })
+
+        val byDuration = controller.listTrips(TripFilter(), PageRequest.of(0, 20, Sort.by("durationMinutes")))
+        assertEquals(listOf("FR0001-20260629", "FR0002-20260629"), byDuration.content.map { it.code })
     }
 
     // Verifies the "error-path" controller endpoint: propagates not-found error for an unknown code
