@@ -73,14 +73,20 @@ class GlobalExceptionHandler(
         ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(e.message))
 
     /**
-     * A concurrent POST that loses the UNIQUE(idempotency_key) race → 409 Conflict. The common sequential
-     * retry is handled earlier by the fast-path replay in OrderService; this only fires for two in-flight
-     * requests sharing a key, and a subsequent retry resolves to the committed order.
+     * A write that loses a UNIQUE-constraint race → 409 Conflict. The message names the actual conflict:
+     * two in-flight creates sharing an Idempotency-Key vs two in-flight add-legs for the same trip. The
+     * common sequential retry never lands here (fast-path replay / the addLeg pre-checks handle it).
      */
     @ExceptionHandler(DataIntegrityViolationException::class)
-    fun conflict(e: DataIntegrityViolationException): ResponseEntity<ErrorResponse> =
-        ResponseEntity.status(HttpStatus.CONFLICT)
-            .body(ErrorResponse("duplicate request in flight (idempotency key); retry to fetch the existing order"))
+    fun conflict(e: DataIntegrityViolationException): ResponseEntity<ErrorResponse> {
+        val message =
+            if (e.message?.contains("uq_order_legs_order_trip") == true) {
+                "this trip is already part of the booking; refresh and retry"
+            } else {
+                "duplicate request in flight (idempotency key); retry to fetch the existing order"
+            }
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse(message))
+    }
 
     /**
      * The intake @RateLimiter rejected the request (over the per-window budget) → 429 Too Many Requests +

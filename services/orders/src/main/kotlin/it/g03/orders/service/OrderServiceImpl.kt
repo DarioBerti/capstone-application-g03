@@ -87,6 +87,16 @@ class OrderServiceImpl(
         check(current.none { it.direction == direction && it.status in ACTIVE_LEG }) {
             "a $direction leg is already on this booking"
         }
+        // The (order, trip) reservation pair is one-shot across the saga: Inventory replays the stored outcome
+        // for any re-emitted reserve-seats on the same pair (its at-least-once idempotency backstop), so a
+        // removed/expired trip cannot be revived here — the retry belongs on a fresh booking.
+        check(current.none { it.tripCode == tripCode }) {
+            if (current.any { it.tripCode == tripCode && it.status in ACTIVE_LEG }) {
+                "trip $tripCode is already part of this booking"
+            } else {
+                "trip $tripCode was already used on this booking; start a new booking to re-add it"
+            }
+        }
 
         legs.save(
             OrderLeg(
@@ -183,7 +193,13 @@ class OrderServiceImpl(
         if (order.status != OrderStatus.HELD) {
             throw BookingNotPayableException("order $orderId is ${order.status}, cannot open a payment session")
         }
-        val reserved = legs.findByOrderId(orderId).filter { it.status == LegStatus.RESERVED }
+        val orderLegs = legs.findByOrderId(orderId)
+        // Mirror pay's distinction: an in-flight reservation is a transient conflict the client can retry,
+        // not the terminal "nothing to pay for".
+        if (orderLegs.any { it.status == LegStatus.PENDING }) {
+            throw BookingNotPayableException("a reservation is still settling for order $orderId; retry")
+        }
+        val reserved = orderLegs.filter { it.status == LegStatus.RESERVED }
         if (reserved.none { it.direction == LegDirection.OUTBOUND }) {
             throw BookingNotPayableException("no reserved outbound leg to pay for on order $orderId")
         }
