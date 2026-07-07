@@ -45,4 +45,11 @@ class InventoryController(
     // GET /api/inventory/items -> returns the full list of trip seat counts
     @GetMapping("/items")
     fun items(): List<TripSeats> = items.findAll()
+
+    // POST /api/inventory/republish-availability -> re-emit a seat-availability event for every trip so
+    // read-side consumers (Catalog's projection) can be seeded without a booking. INTERNAL/ops-only: deliberately
+    // OFF the narrow public /api/inventory/availability route (that prefix is public); this is reached only via the
+    // broad /api/inventory route (dev-gated) or in-cluster. Idempotent. Returns how many trips were emitted.
+    @PostMapping("/republish-availability")
+    fun republishAvailability(): Map<String, Int> = mapOf("republished" to service.republishAllAvailability())
 }

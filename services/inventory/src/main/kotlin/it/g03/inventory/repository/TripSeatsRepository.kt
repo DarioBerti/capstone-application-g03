@@ -44,4 +44,8 @@ interface TripSeatsRepository : JpaRepository<TripSeats, String> {
         """,
     )
     fun restock(@Param("tripCode") tripCode: String, @Param("qty") qty: Int): Int
+
+    /** Every known trip code — drives the one-shot availability snapshot republish (no seat mutation). */
+    @Query("select t.tripCode from TripSeats t")
+    fun findAllTripCodes(): List<String>
 }

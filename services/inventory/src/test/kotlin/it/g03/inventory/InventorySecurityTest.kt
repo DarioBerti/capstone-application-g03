@@ -10,6 +10,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.context.annotation.Import
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
@@ -59,5 +60,10 @@ class InventorySecurityTest {
     @Test
     fun `the raw items debug read still requires a token`() {
         mockMvc.perform(get("/api/inventory/items")).andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun `the availability republish op requires a token`() {
+        mockMvc.perform(post("/api/inventory/republish-availability")).andExpect(status().isUnauthorized)
     }
 }

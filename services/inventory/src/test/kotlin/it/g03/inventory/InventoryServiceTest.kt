@@ -306,6 +306,32 @@ class InventoryServiceTest {
         assertEquals(listOf(10), availabilityEventsOf(trip).map { it.available })
     }
 
+    // Verifies the one-shot snapshot emits exactly one availability-changed per known trip carrying the current
+    // counts, WITHOUT any booking having moved a seat — this is how a read-side projection (Catalog) gets seeded.
+    @Test
+    fun `republishAllAvailability emits one availability-changed per trip with current counts`() {
+        items.save(TripSeats(tripCode = "FR1000-20260701", totalSeats = 5, available = 3))
+
+        val count = service.republishAllAvailability()
+
+        assertEquals(2, count, "one snapshot per known trip")
+        assertEquals(listOf(10), availabilityEventsOf(trip).map { it.available }, "untouched trip still emits its full count")
+        val other = availabilityEventsOf("FR1000-20260701").single()
+        assertEquals(3, other.available)
+        assertEquals(5, other.totalSeats)
+    }
+
+    // Verifies the snapshot never mutates seat counts and is safe to re-run (each run appends a fresh snapshot;
+    // the downstream projection is last-writer-by-event-time, so re-running only refreshes, never corrupts).
+    @Test
+    fun `republishAllAvailability does not move seats and is safe to re-run`() {
+        service.republishAllAvailability()
+        service.republishAllAvailability()
+
+        assertEquals(10, available(trip), "a snapshot republish must not change seat counts")
+        assertEquals(listOf(10, 10), availabilityEventsOf(trip).map { it.available }, "each run appends one fresh snapshot")
+    }
+
     // Verifies the reconciler sweep restocks and emits availability-changed for the swept trip
     @Test
     fun `reconciler sweep emits availability-changed with the restocked count`() {

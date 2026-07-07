@@ -169,6 +169,17 @@ class InventoryServiceImpl(
         items.findById(tripCode).map { it.toResponse() }
             .orElseThrow { NoSuchElementException("unknown trip: $tripCode") }
 
+    // Seeds read-side consumers without a booking: appends one seat-availability event per trip to the outbox,
+    // in a single tx, reusing the same authoritative emit path as reserve/release. Idempotent downstream —
+    // Catalog's projection is last-writer-by-event-time — so re-running only refreshes, never corrupts.
+    @Transactional
+    override fun republishAllAvailability(): Int {
+        val codes = items.findAllTripCodes()
+        codes.forEach { appendAvailabilityChanged(it) }
+        log.info("republished seat-availability snapshot for {} trips", codes.size)
+        return codes.size
+    }
+
     // Reply to a reserve-seats command via the outbox (REJECTED -> SOLD_OUT, every other outcome means seats were held -> RESERVED)
     private fun appendReservationResult(r: Reservation) {
         val status = if (r.status == ReservationStatus.REJECTED) STATUS_SOLD_OUT else STATUS_RESERVED

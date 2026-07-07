@@ -25,4 +25,8 @@ interface InventoryService {
 
     // Per-trip seat-availability projection for the storefront trip view (unknown trip -> not-found).
     fun availabilityFor(tripCode: String): AvailabilityResponse
+
+    // One-shot snapshot: re-emit a seat-availability event for every known trip so read-side consumers
+    // (Catalog's projection) can be seeded without a booking having moved the count. Returns the trip count.
+    fun republishAllAvailability(): Int
 }
