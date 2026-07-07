@@ -17,13 +17,15 @@ import org.springframework.web.client.RestClient
 import kotlin.test.assertEquals
 
 /**
- * Card-Fields session provider, driven by MockRestServiceServer (no live PayPal). Verifies it fetches a client
- * token and creates a **card-less** AUTHORIZE order (idempotent PayPal-Request-Id), and returns the public
- * client-id + client token + order id the browser needs — with no card/secret in the create-order request.
+ * Button (wallet) session provider, driven by MockRestServiceServer (no live PayPal). Verifies it fetches a
+ * client token and creates a **card-less** AUTHORIZE order (idempotent PayPal-Request-Id) whose wallet
+ * payment_source carries the return/cancel URLs back to the buyer's checkout page — with no card/secret in the
+ * request — and returns the public client-id + client token + order id the browser needs.
  */
 class PayPalSessionProviderTest {
 
     private val base = "https://api-m.sandbox.paypal.com"
+    private val frontend = "https://app.example.test"
     private lateinit var server: MockRestServiceServer
     private lateinit var provider: PayPalSessionProvider
 
@@ -33,11 +35,11 @@ class PayPalSessionProviderTest {
         server = MockRestServiceServer.bindTo(builder).build()
         val restClient = builder.build()
         val tokenProvider = PayPalTokenProvider(restClient, "client-id", "client-secret")
-        provider = PayPalSessionProvider(restClient, tokenProvider, "PUB-CLIENT-ID")
+        provider = PayPalSessionProvider(restClient, tokenProvider, "PUB-CLIENT-ID", frontend)
     }
 
     @Test
-    fun `createSession returns the client token and a card-less created order id`() {
+    fun `createSession returns the client token and a card-less wallet order id with return URLs`() {
         server.expect(requestTo("$base/v1/oauth2/token"))
             .andExpect(method(HttpMethod.POST))
             .andRespond(withSuccess("""{"access_token":"tok-123","expires_in":32400}""", MediaType.APPLICATION_JSON))
@@ -50,7 +52,9 @@ class PayPalSessionProviderTest {
             .andExpect(header("PayPal-Request-Id", "session-order-1"))
             .andExpect(jsonPath("$.intent").value("AUTHORIZE"))
             .andExpect(jsonPath("$.purchase_units[0].amount.value").value("50.00"))
-            .andExpect(jsonPath("$.payment_source").doesNotExist())
+            .andExpect(jsonPath("$.payment_source.card").doesNotExist())
+            .andExpect(jsonPath("$.payment_source.paypal.experience_context.return_url").value("$frontend/orders/order-1"))
+            .andExpect(jsonPath("$.payment_source.paypal.experience_context.cancel_url").value("$frontend/orders/order-1"))
             .andRespond(withSuccess("""{"id":"PP-ORDER-1","status":"CREATED"}""", MediaType.APPLICATION_JSON))
 
         val session = provider.createSession("order-1", 5_000, "EUR", emptyList())

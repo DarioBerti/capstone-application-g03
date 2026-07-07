@@ -79,6 +79,8 @@ paypal:
   base-url: ${PAYPAL_BASE_URL:https://api-m.sandbox.paypal.com}
   client-id: ${PAYPAL_CLIENT_ID:}
   client-secret: ${PAYPAL_CLIENT_SECRET:}
+  # Public frontend origin PayPal redirects the buyer back to after button approval (return/cancel URL base).
+  frontend-base-url: ${FRONTEND_BASE_URL:https://app.localhost}
   test-card:
     number: ${PAYPAL_TEST_CARD_NUMBER:}
     expiry: ${PAYPAL_TEST_CARD_EXPIRY:}

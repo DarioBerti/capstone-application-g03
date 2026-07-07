@@ -10,15 +10,16 @@ import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
-// Everything the browser needs to render PayPal Card Fields and, later, tell us which order it approved.
+// Everything the browser needs to render the PayPal button and, later, tell us which order it approved.
 data class PayPalSession(val clientId: String, val clientToken: String, val payPalOrderId: String)
 
 /**
- * Opens a PayPal Card-Fields session (only wired when payments.provider=paypal). Two PayPal calls, both bounded +
+ * Opens a PayPal button session (only wired when payments.provider=paypal). Two PayPal calls, both bounded +
  * resilient like the payment gateway:
  *  1. generate a per-session **client token** (`/v1/identity/generate-token`) — the SDK auth the browser uses;
- *  2. create a PayPal order (intent=AUTHORIZE) for the booking, **without any card** — the browser attaches the
- *     card to this order id via the SDK. The returned order id is later authorized by the async saga.
+ *  2. create a PayPal order (intent=AUTHORIZE) for the booking with a **wallet** payment source carrying the
+ *     return/cancel URLs, so PayPal sends the buyer back to the checkout page after approval (the redirect
+ *     fallback when the button popup is blocked). The returned order id is later authorized by the async saga.
  * The order is created with `PayPal-Request-Id = session-<orderId>` so a checkout remount is idempotent.
  */
 @Component
@@ -27,6 +28,7 @@ class PayPalSessionProvider(
     private val payPalRestClient: RestClient,
     private val tokenProvider: PayPalTokenProvider,
     @Value("\${paypal.client-id}") private val clientId: String,
+    @Value("\${paypal.frontend-base-url}") private val frontendBaseUrl: String,
 ) {
     @CircuitBreaker(name = PAYPAL_RESILIENCE)
     @Retry(name = PAYPAL_RESILIENCE)
@@ -54,10 +56,17 @@ class PayPalSessionProvider(
             }
 
     private fun createOrder(orderId: String, amountCents: Long, currency: String, items: List<LineItem>): String {
+        // The buyer returns to their booking on the checkout page (SPA route /orders/{orderId}); PayPal appends
+        // its own token/PayerID params.
+        val checkoutUrl = "$frontendBaseUrl/orders/$orderId"
         val request = CreateOrderRequest(
             intent = "AUTHORIZE",
             purchaseUnits = listOf(purchaseUnitFor(amountCents, currency, items)),
-            // No payment_source: the browser attaches the card to this order via Card Fields.
+            paymentSource = PaymentSource(
+                paypal = PayPalWallet(
+                    ExperienceContext(returnUrl = checkoutUrl, cancelUrl = checkoutUrl, brandName = "EuroTransit"),
+                ),
+            ),
         )
         return payPalRestClient.post()
             .uri("/v2/checkout/orders")

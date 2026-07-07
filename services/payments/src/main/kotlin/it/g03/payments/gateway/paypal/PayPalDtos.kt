@@ -1,6 +1,7 @@
 package it.g03.payments.gateway.paypal
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 
 /**
@@ -14,8 +15,8 @@ import com.fasterxml.jackson.annotation.JsonProperty
 data class CreateOrderRequest(
     val intent: String,
     @JsonProperty("purchase_units") val purchaseUnits: List<PurchaseUnit>,
-    // Server-to-server card flow sends a card here; the Card-Fields session creates the order WITHOUT a card
-    // (the browser attaches the card to this order id via the SDK), so it stays null then.
+    // Server-to-server card flow sends a card here; the browser button (wallet) flow sends `paypal` with an
+    // experience_context (return/cancel URLs) so PayPal redirects the buyer back to us after approval.
     @JsonProperty("payment_source") val paymentSource: PaymentSource? = null,
 )
 
@@ -42,12 +43,31 @@ data class Item(
     @JsonProperty("unit_amount") val unitAmount: Amount,
 )
 
-data class PaymentSource(val card: Card)
+// Only the source actually in play is serialized (card XOR paypal); PayPal rejects a null-valued source key.
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class PaymentSource(
+    val card: Card? = null,
+    val paypal: PayPalWallet? = null,
+)
 
 data class Card(
     val number: String,
     val expiry: String,
     @JsonProperty("security_code") val securityCode: String,
+)
+
+// Wallet (button) source: no credentials server-side — the buyer approves on PayPal. experience_context tells
+// PayPal where to send the browser back after approval/cancel (the redirect fallback when the popup is blocked).
+data class PayPalWallet(
+    @JsonProperty("experience_context") val experienceContext: ExperienceContext,
+)
+
+data class ExperienceContext(
+    @JsonProperty("return_url") val returnUrl: String,
+    @JsonProperty("cancel_url") val cancelUrl: String,
+    @JsonProperty("user_action") val userAction: String = "PAY_NOW",
+    @JsonProperty("shipping_preference") val shippingPreference: String = "NO_SHIPPING",
+    @JsonProperty("brand_name") val brandName: String? = null,
 )
 
 // --- create-order response (the authorization id lives under purchase_units[].payments.authorizations[]) -----
