@@ -22,8 +22,10 @@ function DayPrice({ query, day, selected }: { query: DayPriceQuery; day: string;
   if (trips.length === 0) return null
   const cheapest = trips.reduce((min, t) => Math.min(min, t.priceCents), Number.POSITIVE_INFINITY)
   return (
-    <span className="mt-xs whitespace-nowrap">
-      <span className={`font-body-sm text-body-sm ${selected ? 'opacity-80' : 'text-outline'}`}>from </span>
+    <span className="mt-xs flex flex-col items-center">
+      <span className={`font-body-sm text-body-sm leading-tight ${selected ? 'opacity-80' : 'text-outline'}`}>
+        from
+      </span>
       <span className={`font-body-md text-body-md font-bold tabular-nums ${selected ? '' : 'text-on-surface'}`}>
         {formatCents(cheapest, trips[0].currency)}
       </span>
