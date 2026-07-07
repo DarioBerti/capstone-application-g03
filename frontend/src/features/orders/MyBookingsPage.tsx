@@ -4,6 +4,7 @@ import Icon from '../../components/Icon'
 import SignInRequired from '../../components/ui/SignInRequired'
 import DatePicker from '../../components/ui/DatePicker'
 import { EmptyState, ErrorState, LoadingBlock } from '../../components/ui/QueryStates'
+import Pager from '../../components/ui/Pager'
 import OrderStatusBadge from './OrderStatusBadge'
 import { useListMyOrdersQuery } from './ordersApi'
 import { useGetTripQuery } from '../catalog/catalogApi'
@@ -113,29 +114,7 @@ export default function MyBookingsPage() {
         ))}
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-md mt-xl">
-          <button
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page === 0}
-            aria-label="Previous page"
-            className="flex items-center justify-center w-10 h-10 rounded-full text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:pointer-events-none transition-colors"
-          >
-            <Icon name="chevron_left" />
-          </button>
-          <span className="font-body-sm text-body-sm text-on-surface-variant tabular-nums">
-            Page {page + 1} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            disabled={page >= totalPages - 1}
-            aria-label="Next page"
-            className="flex items-center justify-center w-10 h-10 rounded-full text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:pointer-events-none transition-colors"
-          >
-            <Icon name="chevron_right" />
-          </button>
-        </div>
-      )}
+      <Pager page={page} totalPages={totalPages} onPage={setPage} />
     </main>
   )
 }

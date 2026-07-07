@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useAppDispatch, useAppSelector } from '../../app/hooks'
 import { idempotencyKeyMinted, orderCleared, orderUpdated, tripSelected } from './bookingSlice'
+import { ACTIVE_LEG_STATUSES } from './legStatus'
 import { isTerminal } from './useOrderStream'
 import {
   useAddLegMutation,
@@ -62,6 +63,22 @@ export function useBookingActions() {
     [dispatch, removeLeg],
   )
 
+  // Discard the whole booking: release every still-held leg on the backend (so the seats free immediately
+  // rather than at hold-window expiry), then clear the local cart. Each removal is mirrored into the slice
+  // before the next, so if one fails mid-way the cart reflects what's actually released and a retried discard
+  // skips the already-dropped legs — convergent under partial failure.
+  const discardBooking = useCallback(
+    async (orderToDiscard: Order): Promise<void> => {
+      const activeLegs = orderToDiscard.legs.filter((l) => ACTIVE_LEG_STATUSES.has(l.status))
+      for (const leg of activeLegs) {
+        const updated = await removeLeg({ orderId: orderToDiscard.orderId, legId: leg.legId }).unwrap()
+        dispatch(orderUpdated(updated))
+      }
+      dispatch(orderCleared())
+    },
+    [dispatch, removeLeg],
+  )
+
   // Pay within the window (202 Accepted). The confirm/capture saga then proceeds async — observed over SSE.
   const payNow = useCallback(
     async (orderId: string): Promise<Order> => {
@@ -78,6 +95,7 @@ export function useBookingActions() {
     startBooking,
     addReturn,
     dropLeg,
+    discardBooking,
     payNow,
     reset,
     starting: createState.isLoading || addLegState.isLoading,

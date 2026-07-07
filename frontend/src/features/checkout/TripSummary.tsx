@@ -1,15 +1,14 @@
 import { Link } from 'react-router-dom'
 import Icon from '../../components/Icon'
 import { formatCents } from '../../lib/format'
+import { ACTIVE_LEG_STATUSES } from '../booking/legStatus'
 import type { Order } from '../../types'
-
-const ACTIVE_LEG = new Set(['PENDING', 'RESERVED', 'CONFIRMED'])
 
 // Right-column order summary on checkout: the reserved legs and the amount to be authorized. While the hold
 // is still open and the booking is one-way, it also offers going back to add the return — /search resumes
 // the "pick your return" flow from the active booking.
 export default function TripSummary({ order }: { order: Order }) {
-  const legs = order.legs.filter((l) => ACTIVE_LEG.has(l.status))
+  const legs = order.legs.filter((l) => ACTIVE_LEG_STATUSES.has(l.status))
   const hasReturn = legs.some((l) => l.direction === 'RETURN')
   const canAddReturn = order.status === 'HELD' && legs.length > 0 && !hasReturn
   return (

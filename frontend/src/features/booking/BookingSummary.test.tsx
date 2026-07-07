@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router-dom'
 import { configureStore } from '@reduxjs/toolkit'
@@ -103,5 +103,53 @@ describe('BookingSummary', () => {
     // Assert
     expect(screen.queryByRole('button', { name: /proceed to checkout/i })).not.toBeInTheDocument()
     expect(screen.getByText(/select a journey/i)).toBeInTheDocument()
+  })
+
+  test('discarding is a two-step confirm: "Keep" backs out without releasing anything', async () => {
+    // Arrange
+    let deletes = 0
+    server.use(
+      http.delete('*/api/orders/:orderId/legs/:legId', () => {
+        deletes += 1
+        return HttpResponse.json(anOrder('DRAFT', 'RELEASED'))
+      }),
+    )
+    renderSummary(anOrder('HELD', 'RESERVED'))
+
+    // Act — open the confirm, then back out
+    fireEvent.click(screen.getByRole('button', { name: /discard booking/i }))
+    expect(screen.getByText(/discard this booking/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /keep/i }))
+
+    // Assert — confirm dismissed, cart intact, nothing released
+    expect(screen.queryByText(/discard this booking/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /proceed to checkout/i })).toBeInTheDocument()
+    expect(deletes).toBe(0)
+  })
+
+  test('confirming discard releases every held leg and empties the cart', async () => {
+    // Arrange — a round-trip booking (outbound + return both held)
+    const roundTrip = anOrder('HELD', 'RESERVED')
+    roundTrip.legs = [
+      roundTrip.legs[0],
+      { legId: 'o1-return', direction: 'RETURN', tripCode: trip.code, qty: 1, unitPriceCents: 1600, lineAmountCents: 1600, status: 'RESERVED' },
+    ]
+    const released = new Set<string>()
+    server.use(
+      http.delete('*/api/orders/:orderId/legs/:legId', ({ params }) => {
+        released.add(String(params.legId))
+        return HttpResponse.json(anOrder('DRAFT', 'RELEASED'))
+      }),
+    )
+    renderSummary(roundTrip)
+
+    // Act
+    fireEvent.click(screen.getByRole('button', { name: /discard booking/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^discard$/i }))
+
+    // Assert — both legs released, cart returns to the empty state
+    await waitFor(() => expect(screen.getByText(/select a journey/i)).toBeInTheDocument())
+    expect(released).toEqual(new Set(['o1-leg', 'o1-return']))
+    expect(screen.queryByRole('button', { name: /proceed to checkout/i })).not.toBeInTheDocument()
   })
 })
