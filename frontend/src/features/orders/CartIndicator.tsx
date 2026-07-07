@@ -92,7 +92,7 @@ export default function CartIndicator() {
         <div
           role="dialog"
           aria-label="Pending purchases"
-          className="absolute right-0 top-full mt-2 w-80 z-50 bg-surface rounded-xl shadow-2xl border border-outline-variant p-sm"
+          className="absolute right-0 top-full mt-2 w-80 max-w-[90vw] z-50 bg-surface rounded-xl shadow-2xl border border-outline-variant p-sm"
         >
           <p className="px-sm py-xs font-label-caps text-label-caps text-on-surface-variant">
             PENDING {pending.length === 1 ? 'PURCHASE' : 'PURCHASES'}

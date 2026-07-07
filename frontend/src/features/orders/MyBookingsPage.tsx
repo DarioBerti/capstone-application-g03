@@ -56,19 +56,19 @@ export default function MyBookingsPage() {
     <main className="flex-grow w-full max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop py-xl">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-md mb-lg">
         <div className="space-y-xs">
-          <h1 className="font-display-lg text-display-lg-mobile text-on-background">My trips</h1>
+          <h1 className="font-display-lg text-display-lg-mobile md:text-display-lg text-on-background">My trips</h1>
           <p className="font-body-md text-body-md text-on-surface-variant">
             Your confirmed journeys, most recent first.
           </p>
         </div>
-        <div className="flex items-end gap-sm">
-          <div className="w-44">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-sm">
+          <div className="w-full sm:w-44">
             <label className="font-label-caps text-label-caps text-on-surface-variant block ml-xs mb-xs" htmlFor="booked-from">
               BOOKED FROM
             </label>
             <DatePicker id="booked-from" value={fromDate} onChange={(v) => changeFilter('from', v)} placeholder="Any date" className={filterField} />
           </div>
-          <div className="w-44">
+          <div className="w-full sm:w-44">
             <label className="font-label-caps text-label-caps text-on-surface-variant block ml-xs mb-xs" htmlFor="booked-to">
               BOOKED TO
             </label>
@@ -77,7 +77,7 @@ export default function MyBookingsPage() {
           {filtered && (
             <button
               onClick={clearFilter}
-              className="h-12 px-md rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors font-body-sm text-body-sm"
+              className="h-12 px-md rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors font-body-sm text-body-sm self-start sm:self-auto"
             >
               Clear
             </button>
@@ -145,10 +145,10 @@ function BookingCard({ order }: { order: Order }) {
   return (
     <Link
       to={`/orders/${order.orderId}`}
-      className="group bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all flex items-center justify-between gap-lg"
+      className="group bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all flex items-center justify-between gap-md sm:gap-lg"
     >
       <div className="flex items-center gap-md min-w-0">
-        <div className="w-12 h-12 bg-surface-container flex items-center justify-center rounded-lg shrink-0">
+        <div className="w-12 h-12 bg-surface-container hidden sm:flex items-center justify-center rounded-lg shrink-0">
           <Icon name="train" filled className="text-primary" />
         </div>
         <div className="min-w-0 space-y-xs">
@@ -163,7 +163,7 @@ function BookingCard({ order }: { order: Order }) {
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-lg shrink-0">
+      <div className="flex items-center gap-sm sm:gap-lg shrink-0">
         <OrderStatusBadge status={order.status} />
         <span className="font-label-tabular text-label-tabular tabular-nums hidden sm:inline">
           {formatCents(order.amountCents, order.currency)}
@@ -179,7 +179,7 @@ function BookingCard({ order }: { order: Order }) {
 function LegRouteLine({ leg, currency }: { leg: OrderLeg; currency: string }) {
   const { data: trip } = useGetTripQuery(leg.tripCode)
   return (
-    <p className="flex items-center gap-xs min-w-0 font-title-lg text-title-lg text-on-surface">
+    <p className="flex flex-wrap items-center gap-xs min-w-0 font-title-lg text-title-lg text-on-surface">
       <Icon
         name={leg.direction === 'RETURN' ? 'u_turn_left' : 'arrow_right_alt'}
         className="text-on-surface-variant shrink-0"

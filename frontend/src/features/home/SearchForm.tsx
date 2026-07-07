@@ -51,7 +51,7 @@ export default function SearchForm() {
 
   return (
     <div className="mt-xl glass-effect rounded-xl p-md shadow-2xl border border-white/20">
-      <form className="grid grid-cols-1 md:grid-cols-5 gap-sm items-end" onSubmit={onSubmit}>
+      <form className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-sm items-end" onSubmit={onSubmit}>
         <StationCombobox
           id="from"
           label="FROM"
@@ -119,7 +119,7 @@ export default function SearchForm() {
             </div>
           </div>
         </div>
-        <div className="md:col-span-1">
+        <div className="md:col-span-2 lg:col-span-1">
           <button
             type="submit"
             className="w-full h-[68px] motion-gradient text-on-primary rounded-lg flex items-center justify-center gap-sm font-title-lg text-title-lg hover:brightness-110 active:scale-95 transition-all shadow-lg"

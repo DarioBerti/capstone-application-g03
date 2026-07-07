@@ -129,7 +129,7 @@ export default function SearchPage() {
           <h1 className="font-display-lg text-display-lg-mobile md:text-display-lg text-on-background mb-xs">
             {awaitingReturn ? 'Pick your return' : 'Pick your outbound'}
           </h1>
-          <div className="flex items-center gap-sm">
+          <div className="flex flex-wrap items-center gap-sm">
             <span className="font-title-lg text-title-lg text-primary">{from ?? 'Anywhere'}</span>
             <Icon name="arrow_forward" className="text-outline" />
             <span className="font-title-lg text-title-lg text-primary">{to ?? 'Anywhere'}</span>
@@ -177,7 +177,7 @@ export default function SearchPage() {
           })}
         </div>
 
-        <aside className="col-span-12 lg:col-span-4">
+        <aside className={`col-span-12 lg:col-span-4 ${activeOrder ? 'order-first lg:order-none' : ''}`}>
           <div className="sticky top-24 space-y-md">
             <BookingSummary />
           </div>

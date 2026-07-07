@@ -7,7 +7,7 @@ const HERO_IMAGE =
 
 export default function Hero() {
   return (
-    <section className="relative min-h-[680px] md:min-h-[780px] w-full flex items-center bg-inverse-surface">
+    <section className="relative min-h-[min(680px,100svh)] md:min-h-[min(780px,100svh)] w-full flex items-center bg-inverse-surface">
       <div className="absolute inset-0 z-0">
         <img
           src={HERO_IMAGE}
@@ -19,7 +19,7 @@ export default function Hero() {
         />
         <div className="absolute inset-0 bg-gradient-to-t from-on-background/70 via-on-background/25 to-on-background/10" />
       </div>
-      <div className="relative z-10 w-full max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop">
+      <div className="relative z-10 w-full max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop py-xl">
         <div className="max-w-3xl space-y-md">
           <h1 className="font-display-lg text-display-lg-mobile md:text-display-lg text-white drop-shadow-lg">
             Europe, interconnected <br className="hidden md:block" />

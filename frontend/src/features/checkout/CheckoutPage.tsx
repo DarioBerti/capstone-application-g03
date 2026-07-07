@@ -68,17 +68,17 @@ export default function CheckoutPage() {
   return (
     <main className="flex-grow w-full max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop py-xl">
       <div className="grid grid-cols-12 gap-lg">
-        <aside className="col-span-12 md:col-span-3">
+        <aside className="col-span-12 lg:col-span-3 order-last lg:order-none">
           <SagaTracker status={order.status} />
         </aside>
-        <section className="col-span-12 md:col-span-6">
+        <section className="col-span-12 lg:col-span-6">
           {payable ? (
             <PaymentForm order={order} onPay={() => payNow(order.orderId)} processing={paying} />
           ) : (
             <ProcessingPanel status={order.status} />
           )}
         </section>
-        <aside className="col-span-12 md:col-span-3">
+        <aside className="col-span-12 lg:col-span-3">
           <div className="sticky top-24 flex flex-col gap-lg">
             <HoldWindowCard expiresAt={order.expiresAt} remainingSeconds={order.remainingSeconds} />
             <TripSummary order={order} />

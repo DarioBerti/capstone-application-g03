@@ -30,7 +30,7 @@ export default function TripCard({
   return (
     <div className="group bg-surface rounded-xl shadow-sm border border-outline-variant p-md hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-lg">
-        <div className="flex items-start gap-xl flex-1">
+        <div className="flex flex-wrap items-start gap-md md:gap-xl flex-1 min-w-0">
           <div className="flex flex-col">
             <span className="font-headline-md text-headline-md text-on-surface tabular-nums">
               {formatTime(trip.departureTime)}
@@ -40,7 +40,7 @@ export default function TripCard({
             </span>
           </div>
 
-          <div className="flex flex-col flex-1 relative min-w-[200px]">
+          <div className="flex flex-col flex-1 relative min-w-[140px] md:min-w-[200px]">
             <div className="flex items-center gap-md mb-md">
               <div className="w-3 h-3 rounded-full bg-primary z-10 relative" />
               <span className="font-label-tabular text-label-tabular text-on-surface">{trip.origin.name}</span>
