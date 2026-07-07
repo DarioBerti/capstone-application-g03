@@ -49,6 +49,38 @@ const renderPage = () => {
   )
 }
 
+const trip = (code: string, from: string, to: string, dep: string, arr: string) => ({
+  id: `id-${code}`,
+  code,
+  carrierCode: code.slice(0, 2),
+  serviceNumber: '9935',
+  serviceDate: dep.slice(0, 10),
+  origin: { code: from.slice(0, 3).toUpperCase(), name: from, city: from, country: 'IT' },
+  destination: { code: to.slice(0, 3).toUpperCase(), name: to, city: to, country: 'IT' },
+  departureTime: dep,
+  arrivalTime: arr,
+  priceCents: 2510,
+  currency: 'EUR',
+  priceToken: 'tok',
+  availableSeats: 42,
+})
+
+const roundTripOrder: Order = {
+  orderId: 'abcd1234-5678-90ab-cdef-000000000000',
+  status: 'CONFIRMED',
+  rejectionReason: null,
+  currency: 'EUR',
+  amountCents: 5020,
+  createdAt: '2025-09-01T09:00:00Z',
+  expiresAt: null,
+  remainingSeconds: null,
+  paymentInitiatedAt: null,
+  legs: [
+    { legId: 'l1', direction: 'OUTBOUND', tripCode: 'FR9935-20250916', qty: 1, unitPriceCents: 2510, lineAmountCents: 2510, status: 'CONFIRMED' },
+    { legId: 'l2', direction: 'RETURN', tripCode: 'FR9908-20250918', qty: 1, unitPriceCents: 2510, lineAmountCents: 2510, status: 'CONFIRMED' },
+  ],
+}
+
 describe('MyBookingsPage', () => {
   test('requests only CONFIRMED orders, newest first from the backend default sort', async () => {
     renderPage()
@@ -56,5 +88,32 @@ describe('MyBookingsPage', () => {
     expect(lastRequestUrl?.searchParams.get('status')).toBe('CONFIRMED')
     expect(lastRequestUrl?.searchParams.get('size')).toBe('20')
     expect(lastRequestUrl?.searchParams.get('createdFrom')).toBeNull()
+  })
+
+  test('renders a ticket-style card with route, booking code, schedule and total', async () => {
+    server.use(
+      http.get('*/api/orders', () =>
+        HttpResponse.json({ content: [roundTripOrder], totalElements: 1, totalPages: 1, number: 0, size: 20 }),
+      ),
+      http.get('*/api/catalog/trips/FR9935-20250916', () =>
+        HttpResponse.json(trip('FR9935-20250916', 'Torino Porta Susa', 'Milano Centrale', '2025-09-16T11:40:00Z', '2025-09-16T12:30:00Z')),
+      ),
+      http.get('*/api/catalog/trips/FR9908-20250918', () =>
+        HttpResponse.json(trip('FR9908-20250918', 'Milano Centrale', 'Torino Porta Susa', '2025-09-18T10:30:00Z', '2025-09-18T11:24:00Z')),
+      ),
+    )
+    renderPage()
+
+    expect(await screen.findByText('ET-ABCD1234')).toBeInTheDocument()
+    // round-trip header + leg rows resolve the trip codes to station names (await the async catalog reads)
+    expect((await screen.findAllByText('Torino Porta Susa')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Milano Centrale').length).toBeGreaterThan(0)
+    // both legs rendered with their directions and total
+    expect(screen.getByText('OUTBOUND')).toBeInTheDocument()
+    expect(screen.getByText('RETURN')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /view trip/i })).toHaveAttribute(
+      'href',
+      '/orders/abcd1234-5678-90ab-cdef-000000000000',
+    )
   })
 })

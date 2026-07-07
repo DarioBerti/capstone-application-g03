@@ -47,6 +47,11 @@ export function describeDay(isoDay: string): { weekday: string; day: number; mon
   }
 }
 
+// Full weekday name for a trip datetime, e.g. "Tuesday" (the ticket-style date line pairs it with formatDate).
+export function formatWeekday(iso: string): string {
+  return new Date(iso).toLocaleDateString(LOCALE, { weekday: 'long' })
+}
+
 // Human duration between two ISO instants, e.g. "3h 19m".
 export function formatDuration(departIso: string, arriveIso: string): string {
   const mins = Math.max(0, Math.round((new Date(arriveIso).getTime() - new Date(departIso).getTime()) / 60000))

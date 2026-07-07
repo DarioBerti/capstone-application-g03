@@ -5,11 +5,10 @@ import SignInRequired from '../../components/ui/SignInRequired'
 import DatePicker from '../../components/ui/DatePicker'
 import { EmptyState, ErrorState, LoadingBlock } from '../../components/ui/QueryStates'
 import Pager from '../../components/ui/Pager'
-import OrderStatusBadge from './OrderStatusBadge'
 import { useListMyOrdersQuery } from './ordersApi'
 import { useGetTripQuery } from '../catalog/catalogApi'
 import { isAuthenticated } from '../../auth'
-import { formatCents, formatDate, formatTime } from '../../lib/format'
+import { formatCents, formatDate, formatDuration, formatTime, formatWeekday } from '../../lib/format'
 import type { Order, OrderLeg } from '../../types'
 
 const PAGE_SIZE = 20
@@ -108,7 +107,7 @@ export default function MyBookingsPage() {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-md">
+      <div className="grid grid-cols-1 gap-lg">
         {confirmed.map((order) => (
           <BookingCard key={order.orderId} order={order} />
         ))}
@@ -121,64 +120,161 @@ export default function MyBookingsPage() {
 
 function BookingCard({ order }: { order: Order }) {
   const legs = order.legs.filter((l) => l.status !== 'RELEASED')
+  const outbound = legs.find((l) => l.direction === 'OUTBOUND') ?? legs[0]
+  const hasReturn = legs.some((l) => l.direction === 'RETURN')
+  const bookingCode = `ET-${order.orderId.slice(0, 8).toUpperCase()}`
+
   return (
-    <Link
-      to={`/orders/${order.orderId}`}
-      className="group bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all flex items-center justify-between gap-md sm:gap-lg"
-    >
-      <div className="flex items-center gap-md min-w-0">
-        <div className="w-12 h-12 bg-surface-container hidden sm:flex items-center justify-center rounded-lg shrink-0">
-          <Icon name="train" filled className="text-primary" />
-        </div>
-        <div className="min-w-0 space-y-xs">
-          {legs.length === 0 && <p className="font-title-lg text-title-lg text-on-surface">Empty booking</p>}
-          {legs.map((leg) => (
-            <LegRouteLine key={leg.legId} leg={leg} currency={order.currency} />
-          ))}
-          <p className="font-body-sm text-body-sm text-on-surface-variant">
-            ET-{order.orderId.slice(0, 8).toUpperCase()}
-            {order.createdAt ? ` · Booked ${formatDate(order.createdAt)}` : ''} · {legs.length}{' '}
-            {legs.length === 1 ? 'leg' : 'legs'}
-          </p>
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-shadow">
+      <div className="p-md md:p-lg border-b border-outline-variant/60">
+        <p className="font-body-sm text-body-sm text-on-surface-variant mb-xs">
+          {hasReturn ? 'Round trip' : 'One way'}
+          {order.createdAt ? ` · Booked ${formatDate(order.createdAt)}` : ''}
+        </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-sm md:gap-md">
+          {outbound ? (
+            <RouteHeader leg={outbound} hasReturn={hasReturn} />
+          ) : (
+            <p className="font-headline-md text-headline-md font-bold text-on-surface">Empty booking</p>
+          )}
+          <CopyCodeButton code={bookingCode} />
         </div>
       </div>
-      <div className="flex items-center gap-sm sm:gap-lg shrink-0">
-        <OrderStatusBadge status={order.status} />
-        <span className="font-label-tabular text-label-tabular tabular-nums hidden sm:inline">
-          {formatCents(order.amountCents, order.currency)}
-        </span>
-        <Icon name="chevron_right" className="text-on-surface-variant group-hover:text-primary" />
+
+      <div className="flex flex-col">
+        {legs.map((leg) => (
+          <LegRow key={leg.legId} leg={leg} currency={order.currency} />
+        ))}
       </div>
-    </Link>
+
+      <div className="p-md md:px-lg md:py-md flex justify-between items-center gap-md">
+        <div className="font-headline-md text-headline-md text-on-surface">
+          <span className="font-normal text-on-surface-variant mr-xs">Total</span>
+          <span className="font-bold tabular-nums">{formatCents(order.amountCents, order.currency)}</span>
+        </div>
+        <Link
+          to={`/orders/${order.orderId}`}
+          className="bg-primary text-on-primary font-title-lg text-body-md font-bold px-lg py-sm rounded-lg hover:brightness-110 active:scale-95 transition-all shadow-sm"
+        >
+          View trip
+        </Link>
+      </div>
+    </div>
   )
 }
 
-// Resolves a leg's tripCode to its route via the cached catalog read (RTK Query dedupes identical codes
-// across cards); falls back to the raw code while loading or when the trip has left the catalog.
-function LegRouteLine({ leg, currency }: { leg: OrderLeg; currency: string }) {
+// The card's origin ⇄ destination headline, resolved from the outbound leg's trip (RTK Query dedupes the
+// code with the leg rows below); falls back to the raw code until the catalog read lands.
+function RouteHeader({ leg, hasReturn }: { leg: OrderLeg; hasReturn: boolean }) {
   const { data: trip } = useGetTripQuery(leg.tripCode)
   return (
-    <p className="flex flex-wrap items-center gap-xs min-w-0 font-title-lg text-title-lg text-on-surface">
-      <Icon
-        name={leg.direction === 'RETURN' ? 'u_turn_left' : 'arrow_right_alt'}
-        className="text-on-surface-variant shrink-0"
-      />
+    <div className="flex items-center flex-wrap gap-sm font-headline-md text-headline-md font-bold text-on-surface min-w-0">
       {trip ? (
         <>
           <span className="truncate">{trip.origin.name}</span>
-          <Icon name="trending_flat" className="text-primary shrink-0" />
+          <Icon name={hasReturn ? 'sync_alt' : 'arrow_right_alt'} className="text-primary shrink-0" />
           <span className="truncate">{trip.destination.name}</span>
-          <span className="font-body-sm text-body-sm text-on-surface-variant whitespace-nowrap shrink-0">
-            {formatDate(trip.departureTime)} · {formatTime(trip.departureTime)} · {leg.qty} ×{' '}
-            {formatCents(leg.unitPriceCents, currency)}
-          </span>
         </>
       ) : (
-        <span className="truncate">
-          {leg.tripCode}
-          <span className="font-body-sm text-body-sm text-on-surface-variant"> · {leg.qty} × {formatCents(leg.unitPriceCents, currency)}</span>
-        </span>
+        <span className="truncate">{leg.tripCode}</span>
       )}
-    </p>
+    </div>
+  )
+}
+
+function CopyCodeButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard unavailable (insecure context / denied) — the code stays visible to copy manually.
+    }
+  }
+  return (
+    <div className="flex items-center gap-xs font-body-md text-body-md shrink-0">
+      <span className="text-on-surface-variant">Booking code</span>
+      <span className="font-label-tabular text-label-tabular tabular-nums font-bold text-primary ml-xs">{code}</span>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label={copied ? 'Booking code copied' : 'Copy booking code'}
+        className="text-primary hover:bg-surface-container-high p-xs rounded transition-colors flex items-center justify-center"
+      >
+        <Icon name={copied ? 'check' : 'content_copy'} className="text-title-lg" />
+      </button>
+    </div>
+  )
+}
+
+// One outbound/return leg as a ticket row. Resolves the leg's tripCode to its schedule via the cached catalog
+// read (RTK Query dedupes identical codes across cards); degrades to the raw code when the trip has left the
+// catalog. Carriage/seat/class are intentionally omitted — the orders domain doesn't own them.
+function LegRow({ leg, currency }: { leg: OrderLeg; currency: string }) {
+  const { data: trip } = useGetTripQuery(leg.tripCode)
+  return (
+    <div className="p-md md:p-lg border-b border-outline-variant/40 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-md md:gap-lg items-start">
+      <div className="flex items-start gap-sm min-w-0">
+        <Icon name="train" filled className="text-primary mt-xs shrink-0" />
+        <div className="font-title-lg text-title-lg font-bold text-on-surface leading-tight min-w-0">
+          {trip ? (
+            <>
+              <div>{formatWeekday(trip.departureTime)},</div>
+              <div className="tabular-nums">{formatDate(trip.departureTime)}</div>
+            </>
+          ) : (
+            <div className="truncate">{leg.tripCode}</div>
+          )}
+          <div className="font-label-caps text-label-caps text-on-surface-variant mt-xs">
+            {leg.direction === 'RETURN' ? 'RETURN' : 'OUTBOUND'}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-xs font-body-md text-body-md text-on-surface min-w-0">
+        {trip ? (
+          <>
+            <div className="truncate">
+              <span className="text-on-surface-variant">Departure</span>{' '}
+              <span className="font-bold tabular-nums">{formatTime(trip.departureTime)}</span>{' '}
+              <span className="text-on-surface-variant">from</span> <span className="font-bold">{trip.origin.name}</span>
+            </div>
+            <div className="truncate">
+              <span className="text-on-surface-variant">Arrival</span>{' '}
+              <span className="font-bold tabular-nums">{formatTime(trip.arrivalTime)}</span>{' '}
+              <span className="text-on-surface-variant">to</span> <span className="font-bold">{trip.destination.name}</span>
+            </div>
+          </>
+        ) : (
+          <div className="text-on-surface-variant">Schedule unavailable</div>
+        )}
+      </div>
+
+      <div className="space-y-xs font-body-md text-body-md text-on-surface">
+        <div>
+          <span className="text-on-surface-variant">Train</span>{' '}
+          <span className="font-bold">{trip ? `${trip.carrierCode} ${trip.serviceNumber}` : leg.tripCode}</span>
+        </div>
+        {trip && (
+          <div>
+            <span className="text-on-surface-variant">Duration</span>{' '}
+            <span className="font-bold tabular-nums">{formatDuration(trip.departureTime, trip.arrivalTime)}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-xs font-body-md text-body-md text-on-surface">
+        <div>
+          <span className="text-on-surface-variant">Passengers</span>{' '}
+          <span className="font-bold tabular-nums">{leg.qty}</span>
+        </div>
+        <div>
+          <span className="text-on-surface-variant">Fare</span>{' '}
+          <span className="font-bold tabular-nums">{formatCents(leg.lineAmountCents, currency)}</span>
+        </div>
+      </div>
+    </div>
   )
 }
