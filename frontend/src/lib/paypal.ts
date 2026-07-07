@@ -14,12 +14,18 @@ export interface PayPalCardFields {
   submit(): Promise<void>
 }
 
+// CSS applied to the input *inside* PayPal's iframe, keyed by selector (`input`, `::placeholder`, `:focus`, …).
+// PayPal only honours a whitelist of properties (typography, colour, padding); border/background are ignored, so
+// the visible box stays our outer container.
+export type PayPalCardFieldsStyle = Record<string, Record<string, string>>
+
 export interface PayPalCardFieldsOptions {
   // Return the PayPal order the browser should approve (created server-side for this booking).
   createOrder: () => Promise<string>
   // Fired once PayPal has attached the card + run 3DS; `orderID` is the approved order to authorize.
   onApprove: (data: { orderID: string }) => void
   onError: (error: unknown) => void
+  style?: PayPalCardFieldsStyle
 }
 
 export interface PayPalNamespace {

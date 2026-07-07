@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import Icon from '../../components/Icon'
 import { describeError } from '../../components/ui/QueryStates'
 import { formatCents } from '../../lib/format'
-import { loadPayPalSdk, type PayPalCardFields } from '../../lib/paypal'
+import { loadPayPalSdk, type PayPalCardFields, type PayPalCardFieldsStyle } from '../../lib/paypal'
 import { useCreatePayPalSessionMutation } from './paymentSessionApi'
 import type { Order } from '../../types'
 
@@ -13,6 +13,24 @@ import type { Order } from '../../types'
  * `onApprove` hands us the approved order id, which we forward to `onPay` (→ POST /pay). No card field is ever
  * read or transmitted by us.
  */
+// Mirror the storefront's `body-md` role + on-surface/outline colours onto PayPal's iframe input so the hosted
+// fields read as the same field as the rest of the form. Colours are resolved once at render (the `.dark` class);
+// Inter falls back to system-ui inside PayPal's frame. The visible box (border/bg) stays on our outer container,
+// so padding is 0 here — the container's `px-md` supplies the inset.
+function cardFieldStyle(): PayPalCardFieldsStyle {
+  const dark = document.documentElement.classList.contains('dark')
+  return {
+    input: {
+      'font-family': 'Inter, system-ui, sans-serif',
+      'font-size': '16px',
+      'font-weight': '400',
+      color: dark ? 'rgb(224, 231, 245)' : 'rgb(11, 28, 48)',
+      padding: '0',
+    },
+    '::placeholder': { color: dark ? 'rgb(134, 147, 143)' : 'rgb(109, 122, 119)' },
+  }
+}
+
 export default function PaymentForm({
   order,
   onPay,
@@ -44,6 +62,7 @@ export default function PaymentForm({
             setSubmitting(false)
             setError(err)
           },
+          style: cardFieldStyle(),
         })
         if (!cardFields.isEligible()) {
           setError(new Error('Card payments are not available for this account.'))
